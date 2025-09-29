@@ -7,6 +7,10 @@ const cors = require("cors");
 const ical = require("node-ical");
 const cron = require("node-cron");
 
+// Ensure fetch works in Node (for Render / Node 16+)
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+
 const {
   fetchAllResults,
   updateResultsFromSources,
