@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "email": "eoinvoconnor@gmail.com",
+    "firstname": "Eoin",
+    "surname": "O'Connor",
+    "isAdmin": true
+  },
+  {
+    "id": 2,
+    "email": "jane@example.com",
+    "firstname": "Jane",
+    "surname": "Smith",
+    "isAdmin": false
+  },
+  {
+    "id": 3,
+    "email": "tom@example.com",
+    "firstname": "Tom",
+    "surname": "Williams",
+    "isAdmin": false
+  }
+]

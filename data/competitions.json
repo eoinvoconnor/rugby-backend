@@ -1,0 +1,26 @@
+[
+  {
+    "id": 2,
+    "name": "URC",
+    "url": "https://ics.ecal.com/ecal-sub/68b810331c6d630008c085ef/United%20Rugby%20Championship.ics",
+    "createdAt": "2025-09-19T16:38:14.483Z",
+    "lastRefreshed": "2025-09-19T16:38:14.666Z",
+    "color": "#14ae09"
+  },
+  {
+    "id": 3,
+    "name": "Top 14",
+    "url": "https://ics.ecal.com/ecal-sub/68c1b84538582c00081bd07b/Ligue%20Nationale%20De%20Rugby.ics",
+    "createdAt": "2025-09-19T16:39:26.872Z",
+    "lastRefreshed": "2025-09-19T16:39:27.149Z",
+    "color": "#d21997"
+  },
+  {
+    "id": 4,
+    "name": "Premiership",
+    "url": "https://ics.ecal.com/ecal-sub/68b80d5c0fb910000876112c/Premiership%20Rugby%20.ics",
+    "createdAt": "2025-09-22T17:14:24.225Z",
+    "lastRefreshed": "2025-09-22T17:14:24.558Z",
+    "color": "#cbad15"
+  }
+]
