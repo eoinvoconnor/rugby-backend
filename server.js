@@ -1,346 +1,236 @@
 // server.js
+
 const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
-const fs = require("fs");
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const bodyParser = require("body-parser");
 const cron = require("node-cron");
-const { fetchAllResults, updateResultsFromSources } = require("./utils/resultsUpdater");
+const path = require("path");
+
+const {
+  fetchAndUpdateResults,
+  updateResultsFromSources,
+} = require("./utils/resultsUpdater");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
+const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
-// ✅ Serve frontend build in production
-app.use(express.static(path.join(__dirname, "../frontend/build")));
-
-// ✅ Body parser middleware
+// Middleware
+app.use(cors({ origin: true, credentials: true }));
 app.use(bodyParser.json());
 
-// ✅ Database setup
-const dbPath = path.join(__dirname, "rugby_predictions.db");
-const db = new sqlite3.Database(dbPath, (err) => {
+// ======================================================
+// Database setup
+// ======================================================
+const DBSOURCE = "rugby.db";
+const db = new sqlite3.Database(DBSOURCE, (err) => {
   if (err) {
-    console.error("❌ Error opening database:", err.message);
+    console.error("❌ Could not connect to database", err);
   } else {
     console.log("✅ Connected to SQLite database.");
-    initDatabase(); // 🔹 Ensure tables exist
   }
 });
 
-// 🔹 Function to create tables if they don’t exist
-function initDatabase() {
-  db.serialize(() => {
-    db.run(
-      `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE,
-        firstname TEXT,
-        surname TEXT,
-        isAdmin INTEGER DEFAULT 0
-      )`
-    );
+// Create tables if they don’t exist
+db.serialize(() => {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      password TEXT,
+      isAdmin INTEGER DEFAULT 0
+    )`
+  );
 
-    db.run(
-      `CREATE TABLE IF NOT EXISTS competitions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        url TEXT,
-        color TEXT
-      )`
-    );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS competitions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      color TEXT
+    )`
+  );
 
-    db.run(
-      `CREATE TABLE IF NOT EXISTS matches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        competitionId INTEGER,
-        teamA TEXT,
-        teamB TEXT,
-        kickoff TEXT,
-        result TEXT,
-        FOREIGN KEY (competitionId) REFERENCES competitions(id)
-      )`
-    );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      competition_id INTEGER,
+      date TEXT,
+      team1 TEXT,
+      team2 TEXT,
+      score1 INTEGER,
+      score2 INTEGER,
+      completed INTEGER DEFAULT 0,
+      FOREIGN KEY (competition_id) REFERENCES competitions(id)
+    )`
+  );
 
-    db.run(
-      `CREATE TABLE IF NOT EXISTS predictions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        userId INTEGER,
-        matchId INTEGER,
-        winner TEXT,
-        margin INTEGER,
-        UNIQUE(userId, matchId),
-        FOREIGN KEY (userId) REFERENCES users(id),
-        FOREIGN KEY (matchId) REFERENCES matches(id)
-      )`
-    );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS predictions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      match_id INTEGER,
+      predicted_winner TEXT,
+      predicted_margin INTEGER,
+      points_awarded INTEGER DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (match_id) REFERENCES matches(id)
+    )`
+  );
 
-    console.log("✅ Database initialized (tables checked/created).");
+  console.log("✅ Database initialized (tables checked/created).");
+});
+
+// ======================================================
+// Auth Middleware
+// ======================================================
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
   });
 }
 
-// ✅ CORS setup for Render
-const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://rugby-frontend.onrender.com";
-
-app.use(
-  cors({
-    origin: FRONTEND_URL,
-    credentials: true,
-  })
-);
-
-// ✅ Session versioning
-let sessionVersion = 1;
-
 // ======================================================
-// Routes
+// API Endpoints
 // ======================================================
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
-});
-
-// Session version (force logout support)
+// Session version check
 app.get("/api/session-version", (req, res) => {
-  res.json({ sessionVersion });
+  res.json({ version: "1.0.0" });
 });
 
-// Force logout (admin only)
-app.post("/api/admin/force-logout", (req, res) => {
-  sessionVersion++;
-  res.json({ message: "All users logged out", sessionVersion });
+// User registration
+app.post("/api/users/register", (req, res) => {
+  const { username, password } = req.body;
+  const hashedPassword = bcrypt.hashSync(password, 10);
+
+  const query = `INSERT INTO users (username, password) VALUES (?, ?)`;
+  db.run(query, [username, hashedPassword], function (err) {
+    if (err) {
+      console.error("❌ Error registering user:", err.message);
+      return res.status(500).json({ error: "User already exists." });
+    }
+    res.json({ id: this.lastID, username });
+  });
 });
 
-// ======================================================
-// Competitions
-// ======================================================
+// User login
+app.post("/api/users/login", (req, res) => {
+  const { username, password } = req.body;
+  db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
+    if (err || !user) {
+      console.error("❌ Error logging in user:", err?.message || "Not found");
+      return res.status(400).json({ error: "Invalid username or password." });
+    }
 
-// Fetch all competitions
+    if (!bcrypt.compareSync(password, user.password)) {
+      return res.status(400).json({ error: "Invalid username or password." });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, isAdmin: user.isAdmin },
+      JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
+    res.json({ token, username: user.username, isAdmin: user.isAdmin });
+  });
+});
+
+// Get competitions
 app.get("/api/competitions", (req, res) => {
-  db.all("SELECT * FROM competitions", [], (err, rows) => {
+  db.all(`SELECT * FROM competitions`, [], (err, rows) => {
     if (err) {
       console.error("❌ Error fetching competitions:", err.message);
-      res.status(500).json({ error: "Failed to fetch competitions" });
-    } else {
-      res.json(rows);
+      return res.status(500).json({ error: err.message });
     }
+    res.json(rows);
   });
 });
 
-// Add competition
-app.post("/api/competitions", (req, res) => {
-  const { name, url, color } = req.body;
-  if (!name || !url) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  const stmt = db.prepare(
-    "INSERT INTO competitions (name, url, color) VALUES (?, ?, ?)"
-  );
-  stmt.run(name, url, color, function (err) {
-    if (err) {
-      console.error("❌ Error inserting competition:", err.message);
-      res.status(500).json({ error: "Failed to add competition" });
-    } else {
-      res.json({ success: true, id: this.lastID });
-    }
-  });
-  stmt.finalize();
-});
-
-// Update competition
-app.put("/api/competitions/:id", (req, res) => {
-  const { id } = req.params;
-  const { name, url, color } = req.body;
-
-  const stmt = db.prepare(
-    "UPDATE competitions SET name = ?, url = ?, color = ? WHERE id = ?"
-  );
-  stmt.run(name, url, color, id, function (err) {
-    if (err) {
-      console.error("❌ Error updating competition:", err.message);
-      res.status(500).json({ error: "Failed to update competition" });
-    } else {
-      res.json({ success: true });
-    }
-  });
-  stmt.finalize();
-});
-
-// Delete competition
-app.delete("/api/competitions/:id", (req, res) => {
-  const { id } = req.params;
-
-  const stmt = db.prepare("DELETE FROM competitions WHERE id = ?");
-  stmt.run(id, function (err) {
-    if (err) {
-      console.error("❌ Error deleting competition:", err.message);
-      res.status(500).json({ error: "Failed to delete competition" });
-    } else {
-      res.json({ success: true });
-    }
-  });
-  stmt.finalize();
-});
-
-// ======================================================
-// Matches
-// ======================================================
-
-// Fetch matches
+// Get matches
 app.get("/api/matches", (req, res) => {
-  db.all("SELECT * FROM matches", [], (err, rows) => {
-    if (err) {
-      console.error("❌ Error fetching matches:", err.message);
-      res.status(500).json({ error: "Failed to fetch matches" });
-    } else {
-      res.json(rows);
-    }
-  });
-});
-
-// Update match
-app.put("/api/matches/:id", (req, res) => {
-  const { id } = req.params;
-  const { teamA, teamB, kickoff, competitionId, result } = req.body;
-
-  const stmt = db.prepare(
-    "UPDATE matches SET teamA = ?, teamB = ?, kickoff = ?, competitionId = ?, result = ? WHERE id = ?"
-  );
-  stmt.run(
-    teamA,
-    teamB,
-    kickoff,
-    competitionId,
-    JSON.stringify(result),
-    id,
-    function (err) {
+  db.all(
+    `SELECT m.*, c.name as competition_name, c.color as competition_color
+     FROM matches m
+     JOIN competitions c ON m.competition_id = c.id
+     ORDER BY date ASC`,
+    [],
+    (err, rows) => {
       if (err) {
-        console.error("❌ Error updating match:", err.message);
-        res.status(500).json({ error: "Failed to update match" });
-      } else {
-        res.json({ success: true });
+        console.error("❌ Error fetching matches:", err.message);
+        return res.status(500).json({ error: err.message });
       }
-    }
-  );
-  stmt.finalize();
-});
-
-// ======================================================
-// Predictions
-// ======================================================
-
-// Fetch all predictions
-app.get("/api/predictions", (req, res) => {
-  db.all("SELECT * FROM predictions", [], (err, rows) => {
-    if (err) {
-      console.error("❌ Error fetching predictions:", err.message);
-      res.status(500).json({ error: "Failed to fetch predictions" });
-    } else {
       res.json(rows);
     }
-  });
+  );
 });
 
-// Add / update prediction
-app.post("/api/predictions", (req, res) => {
-  const { userId, matchId, winner, margin } = req.body;
-
-  if (!userId || !matchId) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  const stmt = db.prepare(
-    "INSERT INTO predictions (userId, matchId, winner, margin) VALUES (?, ?, ?, ?) " +
-      "ON CONFLICT(userId, matchId) DO UPDATE SET winner = ?, margin = ?"
-  );
-
-  stmt.run(
-    userId,
-    matchId,
-    winner,
-    margin,
-    winner,
-    margin,
+// Submit prediction
+app.post("/api/predictions", authenticateToken, (req, res) => {
+  const { match_id, predicted_winner, predicted_margin } = req.body;
+  const query = `INSERT INTO predictions (user_id, match_id, predicted_winner, predicted_margin)
+                 VALUES (?, ?, ?, ?)`;
+  db.run(
+    query,
+    [req.user.id, match_id, predicted_winner, predicted_margin],
     function (err) {
       if (err) {
         console.error("❌ Error saving prediction:", err.message);
-        res.status(500).json({ error: "Failed to save prediction" });
-      } else {
-        res.json({ success: true });
+        return res.status(500).json({ error: err.message });
       }
+      res.json({ id: this.lastID });
     }
   );
-
-  stmt.finalize();
 });
 
-// ======================================================
-// Users
-// ======================================================
-
-app.post("/api/users/login", (req, res) => {
-  const { email, firstname, surname } = req.body;
-  if (!email || !firstname || !surname) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
-  db.get("SELECT * FROM users WHERE email = ?", [email], (err, row) => {
+// Leaderboard
+app.get("/api/leaderboard", (req, res) => {
+  const query = `
+    SELECT u.username, SUM(p.points_awarded) as total_points
+    FROM predictions p
+    JOIN users u ON p.user_id = u.id
+    GROUP BY u.id
+    ORDER BY total_points DESC
+  `;
+  db.all(query, [], (err, rows) => {
     if (err) {
-      console.error("❌ Error logging in user:", err.message);
-      return res.status(500).json({ error: "Database error" });
+      console.error("❌ Error fetching leaderboard:", err.message);
+      return res.status(500).json({ error: err.message });
     }
-
-    if (row) {
-      res.json(row);
-    } else {
-      const stmt = db.prepare(
-        "INSERT INTO users (email, firstname, surname, isAdmin) VALUES (?, ?, ?, ?)"
-      );
-      stmt.run(email, firstname, surname, 0, function (err) {
-        if (err) {
-          console.error("❌ Error creating user:", err.message);
-          return res.status(500).json({ error: "Failed to create user" });
-        }
-        db.get(
-          "SELECT * FROM users WHERE id = ?",
-          [this.lastID],
-          (err, newRow) => {
-            if (err) {
-              console.error("❌ Error fetching new user:", err.message);
-              return res.status(500).json({ error: "Failed to fetch new user" });
-            }
-            res.json(newRow);
-          }
-        );
-      });
-      stmt.finalize();
-    }
+    res.json(rows);
   });
 });
 
 // ======================================================
-// Admin utilities
+// Results updater (manual + cron)
 // ======================================================
+app.post("/api/admin/update-results", authenticateToken, async (req, res) => {
+  if (!req.user.isAdmin) return res.sendStatus(403);
 
-// Recalculate leaderboard
-app.post("/api/admin/update-results", async (req, res) => {
   try {
-    const updated = await updateResultsFromSources();
-    res.json({ message: "Results updated", updated });
+    await updateResultsFromSources(db);
+    res.json({ success: true });
   } catch (err) {
-    console.error("❌ Results updater failed:", err);
-    res.status(500).json({ error: "Failed to update results" });
+    console.error("❌ Results updater failed:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ======================================================
-// Frontend fallback (SPA routing)
-// ======================================================
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../frontend/build/index.html"));
+// Cron job - run every hour
+cron.schedule("0 * * * *", () => {
+  console.log("⏰ Scheduled task: updating results...");
+  updateResultsFromSources(db).catch((err) =>
+    console.error("❌ Scheduled update failed:", err.message)
+  );
 });
 
 // ======================================================
@@ -348,17 +238,4 @@ app.get("*", (req, res) => {
 // ======================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-});
-
-// ======================================================
-// Background jobs
-// ======================================================
-cron.schedule("0 * * * *", async () => {
-  console.log("⏰ Running scheduled results update...");
-  try {
-    const updated = await fetchAllResults();
-    console.log(`✅ Scheduled update: ${updated} matches updated`);
-  } catch (err) {
-    console.error("❌ Scheduled results update failed:", err);
-  }
 });
