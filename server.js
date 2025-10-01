@@ -24,8 +24,60 @@ const db = new sqlite3.Database(dbPath, (err) => {
     console.error("❌ Error opening database:", err.message);
   } else {
     console.log("✅ Connected to SQLite database.");
+    initDatabase(); // 🔹 Ensure tables exist
   }
 });
+
+// 🔹 Function to create tables if they don’t exist
+function initDatabase() {
+  db.serialize(() => {
+    db.run(
+      `CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        firstname TEXT,
+        surname TEXT,
+        isAdmin INTEGER DEFAULT 0
+      )`
+    );
+
+    db.run(
+      `CREATE TABLE IF NOT EXISTS competitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        url TEXT,
+        color TEXT
+      )`
+    );
+
+    db.run(
+      `CREATE TABLE IF NOT EXISTS matches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        competitionId INTEGER,
+        teamA TEXT,
+        teamB TEXT,
+        kickoff TEXT,
+        result TEXT,
+        FOREIGN KEY (competitionId) REFERENCES competitions(id)
+      )`
+    );
+
+    db.run(
+      `CREATE TABLE IF NOT EXISTS predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER,
+        matchId INTEGER,
+        winner TEXT,
+        margin INTEGER,
+        UNIQUE(userId, matchId),
+        FOREIGN KEY (userId) REFERENCES users(id),
+        FOREIGN KEY (matchId) REFERENCES matches(id)
+      )`
+    );
+
+    console.log("✅ Database initialized (tables checked/created).");
+  });
+}
 
 // ✅ CORS setup for Render
 const FRONTEND_URL =
