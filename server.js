@@ -26,6 +26,14 @@ app.use(
   })
 );
 
+// ✅ Health check endpoint
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // === Utility to read/write JSON files with logging ===
 function readJSON(filename) {
   const filepath = path.join(__dirname, "data", filename);
