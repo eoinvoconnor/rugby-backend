@@ -148,15 +148,27 @@ app.post("/api/users/register", async (req, res) => {
   });
 });
 
+// ==================== LOGIN ====================
 app.post("/api/users/login", async (req, res) => {
-  const { email, password } = req.body;
+  const { email, firstname, surname } = req.body;
   let users = await readJSON("users.json");
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(400).json({ error: "Invalid credentials" });
+  let user = users.find((u) => u.email === email);
 
+  // If user doesn’t exist, create one
+  if (!user) {
+    user = {
+      id: users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1,
+      email,
+      firstname: firstname || "",
+      surname: surname || "",
+      isAdmin: email === "eoinvoconnor@gmail.com", // only you get admin
+    };
+    users.push(user);
+    await writeJSON("users.json", users);
+  }
+
+  // Generate JWT
   const token = jwt.sign(
     { id: user.id, email: user.email, isAdmin: user.isAdmin },
     JWT_SECRET,
