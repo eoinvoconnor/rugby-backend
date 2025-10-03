@@ -149,6 +149,70 @@ app.post("/api/users/login", (req, res) => {
   res.json({ ...user, token });
 });
 
+// =============================
+// ✅ USERS API
+// =============================
+const usersFile = path.join(DATA_DIR, "users.json");
+
+// Load users helper
+const loadUsers = () => {
+  try {
+    return JSON.parse(fs.readFileSync(usersFile, "utf8"));
+  } catch {
+    return [];
+  }
+};
+
+// Save users helper
+const saveUsers = (users) => {
+  fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+};
+
+// GET all users
+app.get("/api/users", (req, res) => {
+  res.json(loadUsers());
+});
+
+// POST new user
+app.post("/api/users", (req, res) => {
+  const users = loadUsers();
+  const newUser = {
+    id: Date.now(),
+    firstname: req.body.firstname || "",
+    surname: req.body.surname || "",
+    email: req.body.email || "",
+    isAdmin: req.body.isAdmin || false,
+  };
+  users.push(newUser);
+  saveUsers(users);
+  res.status(201).json(newUser);
+});
+
+// PUT update user
+app.put("/api/users/:id", (req, res) => {
+  const users = loadUsers();
+  const id = parseInt(req.params.id);
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) return res.status(404).json({ error: "User not found" });
+
+  users[idx] = { ...users[idx], ...req.body, id };
+  saveUsers(users);
+  res.json(users[idx]);
+});
+
+// DELETE user
+app.delete("/api/users/:id", (req, res) => {
+  let users = loadUsers();
+  const id = parseInt(req.params.id);
+  const before = users.length;
+  users = users.filter((u) => u.id !== id);
+  if (users.length === before)
+    return res.status(404).json({ error: "User not found" });
+
+  saveUsers(users);
+  res.json({ success: true });
+});
+
 // Predictions
 app.post("/api/predictions", authenticateToken, (req, res) => {
   const predictions = readJSON("predictions.json");
