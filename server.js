@@ -194,21 +194,30 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
   res.json(predictions.filter((p) => p.userId === req.user.id));
 });
 
+// Save predictions (single or batch)
 app.post("/api/predictions", authenticateToken, async (req, res) => {
   let predictions = await readJSON("predictions.json");
-  const newPrediction = { ...req.body, userId: req.user.id };
+
+  // ✅ Handle both single object and array
+  const incoming = Array.isArray(req.body) ? req.body : [req.body];
+
+  const newPredictions = incoming.map((pred) => ({
+    ...pred,
+    userId: req.user.id,
+  }));
+
+  // Remove old predictions for same matches from same user
   predictions = predictions.filter(
-    (p) => !(p.userId === req.user.id && p.matchId === newPrediction.matchId)
+    (p) =>
+      !(p.userId === req.user.id &&
+        newPredictions.some((np) => np.matchId === p.matchId))
   );
-  predictions.push(newPrediction);
+
+  // Add new ones
+  predictions.push(...newPredictions);
+
   await writeJSON("predictions.json", predictions);
   res.json({ success: true });
-});
-
-// ==================== CRON ====================
-cron.schedule("0 2 * * *", async () => {
-  console.log("⏰ Running daily results update...");
-  await updateResultsFromSources();
 });
 
 // ==================== Start Server ====================
