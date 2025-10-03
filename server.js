@@ -213,29 +213,28 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
   res.json(predictions.filter((p) => p.userId === req.user.id));
 });
 
-// Save predictions (single or batch)
+// ==================== PREDICTIONS ====================
 app.post("/api/predictions", authenticateToken, async (req, res) => {
   let predictions = await readJSON("predictions.json");
 
-  // ✅ Handle both single object and array
-  const incoming = Array.isArray(req.body) ? req.body : [req.body];
+  // Accept single object (what frontend sends)
+  const incoming = req.body;
 
-  const newPredictions = incoming.map((pred) => ({
-    ...pred,
+  // Force userId from JWT for safety, ignore spoofed userId
+  const newPrediction = {
+    ...incoming,
     userId: req.user.id,
-  }));
+  };
 
-  // Remove old predictions for same matches from same user
+  // Remove existing prediction for this user + match
   predictions = predictions.filter(
-    (p) =>
-      !(p.userId === req.user.id &&
-        newPredictions.some((np) => np.matchId === p.matchId))
+    (p) => !(p.userId === req.user.id && p.matchId === newPrediction.matchId)
   );
 
-  // Add new ones
-  predictions.push(...newPredictions);
-
+  // Save new one
+  predictions.push(newPrediction);
   await writeJSON("predictions.json", predictions);
+
   res.json({ success: true });
 });
 
