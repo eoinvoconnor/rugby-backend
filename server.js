@@ -13,6 +13,8 @@ const { updateResultsFromSources } = require("./utils/updateResultsFromSources")
 const app = express();
 const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
+// ✅ Central place for JSON data storage
+const DATA_DIR = path.join(__dirname, "data");
 
 // Middleware
 app.use(bodyParser.json());
