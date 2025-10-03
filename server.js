@@ -17,13 +17,19 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
 // Middleware
 app.use(express.json());
-// ✅ Allow only your deployed frontend, and allow credentials
+
+// ✅ CORS configuration
 app.use(
   cors({
     origin: "https://rugby-frontend.onrender.com",
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// Explicitly handle OPTIONS preflight
+app.options("*", cors());
 
 // Helpers
 async function readJSON(file) {
