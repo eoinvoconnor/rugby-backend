@@ -1,292 +1,271 @@
 // server.js
-
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
-const cors = require("cors");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const bodyParser = require("body-parser");
-const cron = require("node-cron");
+const fs = require("fs");
 const path = require("path");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
+const cron = require("node-cron");
 
-const {
-  fetchAndUpdateResults,
-  updateResultsFromSources,
-} = require("./utils/resultsUpdater");
+const { updateResultsFromSources } = require("./updateResultsFromBBC"); // keep your updater
 
 const app = express();
-const PORT = process.env.PORT || 5001;
-const JWT_SECRET = process.env.JWT_SECRET || "secret";
+const PORT = process.env.PORT || 10000;
+const DATA_DIR = path.join(__dirname, "data");
+
+const JWT_SECRET = process.env.JWT_SECRET || "supersecret"; // change in production
 
 // Middleware
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors());
 app.use(bodyParser.json());
 
-// ======================================================
-// Database setup
-// ======================================================
-const DBSOURCE = "rugby.db";
-const db = new sqlite3.Database(DBSOURCE, (err) => {
-  if (err) {
-    console.error("❌ Could not connect to database", err);
-  } else {
-    console.log("✅ Connected to SQLite database.");
-  }
-});
+// ✅ Helper: Read/write JSON
+function readJSON(filename) {
+  const file = path.join(DATA_DIR, filename);
+  if (!fs.existsSync(file)) return [];
+  return JSON.parse(fs.readFileSync(file, "utf-8"));
+}
+function writeJSON(filename, data) {
+  const file = path.join(DATA_DIR, filename);
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
 
-// Create tables if they don’t exist
-db.serialize(() => {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE,
-      password TEXT,
-      isAdmin INTEGER DEFAULT 0
-    )`
-  );
-
-  db.run(
-    `CREATE TABLE IF NOT EXISTS competitions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      color TEXT
-    )`
-  );
-
-  db.run(
-    `CREATE TABLE IF NOT EXISTS matches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      competition_id INTEGER,
-      date TEXT,
-      team1 TEXT,
-      team2 TEXT,
-      score1 INTEGER,
-      score2 INTEGER,
-      completed INTEGER DEFAULT 0,
-      FOREIGN KEY (competition_id) REFERENCES competitions(id)
-    )`
-  );
-
-  db.run(
-    `CREATE TABLE IF NOT EXISTS predictions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      match_id INTEGER,
-      predicted_winner TEXT,
-      predicted_margin INTEGER,
-      points_awarded INTEGER DEFAULT 0,
-      FOREIGN KEY (user_id) REFERENCES users(id),
-      FOREIGN KEY (match_id) REFERENCES matches(id)
-    )`
-  );
-
-  console.log("✅ Database initialized (tables checked/created).");
-});
-
-// ======================================================
-// Auth Middleware
-// ======================================================
+// ✅ Middleware: authenticate JWT
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.sendStatus(401);
+  if (!token) return res.status(401).json({ error: "Token missing" });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+    if (err) return res.status(403).json({ error: "Invalid token" });
     req.user = user;
     next();
   });
 }
 
-// ======================================================
-// API Endpoints
-// ======================================================
-
-// Session version check
-app.get("/api/session-version", (req, res) => {
-  res.json({ version: "1.0.0" });
+// ✅ Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// User registration
+// ✅ Debug files (admin/dev)
+app.get("/api/debug/files", (req, res) => {
+  const files = fs.readdirSync(DATA_DIR).map((file) => {
+    const stats = fs.statSync(path.join(DATA_DIR, file));
+    return {
+      file,
+      size: stats.size,
+      modified: stats.mtime,
+      preview: fs.readFileSync(path.join(DATA_DIR, file), "utf-8").substring(0, 200),
+    };
+  });
+  res.json({ files });
+});
+
+// ==================== USERS ====================
+
+// Register
 app.post("/api/users/register", (req, res) => {
-  const { username, password } = req.body;
-  const hashedPassword = bcrypt.hashSync(password, 10);
-
-  const query = `INSERT INTO users (username, password) VALUES (?, ?)`;
-  db.run(query, [username, hashedPassword], function (err) {
-    if (err) {
-      console.error("❌ Error registering user:", err.message);
-      return res.status(500).json({ error: "User already exists." });
-    }
-    res.json({ id: this.lastID, username });
-  });
-});
-
-// User login
-app.post("/api/users/login", (req, res) => {
-  const { username, password } = req.body;
-  db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
-    if (err || !user) {
-      console.error("❌ Error logging in user:", err?.message || "Not found");
-      return res.status(400).json({ error: "Invalid username or password." });
-    }
-
-    if (!bcrypt.compareSync(password, user.password)) {
-      return res.status(400).json({ error: "Invalid username or password." });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, username: user.username, isAdmin: user.isAdmin },
-      JWT_SECRET,
-      { expiresIn: "2h" }
-    );
-
-    res.json({ token, username: user.username, isAdmin: user.isAdmin });
-  });
-});
-
-// Get competitions
-app.get("/api/competitions", (req, res) => {
-  db.all(`SELECT * FROM competitions`, [], (err, rows) => {
-    if (err) {
-      console.error("❌ Error fetching competitions:", err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-
-// Get matches
-app.get("/api/matches", (req, res) => {
-  db.all(
-    `SELECT m.*, c.name as competition_name, c.color as competition_color
-     FROM matches m
-     JOIN competitions c ON m.competition_id = c.id
-     ORDER BY date ASC`,
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("❌ Error fetching matches:", err.message);
-        return res.status(500).json({ error: err.message });
-      }
-      res.json(rows);
-    }
-  );
-});
-
-// Submit prediction
-app.post("/api/predictions", authenticateToken, (req, res) => {
-  const { match_id, predicted_winner, predicted_margin } = req.body;
-  const query = `INSERT INTO predictions (user_id, match_id, predicted_winner, predicted_margin)
-                 VALUES (?, ?, ?, ?)`;
-  db.run(
-    query,
-    [req.user.id, match_id, predicted_winner, predicted_margin],
-    function (err) {
-      if (err) {
-        console.error("❌ Error saving prediction:", err.message);
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ id: this.lastID });
-    }
-  );
-});
-
-// POST prediction (save)
-app.post("/api/predictions", (req, res) => {
-  const { userId, matchId, predictedWinner, predictedMargin } = req.body;
-  if (!userId || !matchId || !predictedWinner || !predictedMargin) {
-    return res.status(400).json({ error: "Missing fields" });
+  const { email, firstname, surname } = req.body;
+  if (!email || !firstname || !surname) {
+    return res.status(400).json({ error: "Missing required fields" });
   }
 
-  const matchesFile = path.join(DATA_DIR, "matches.json");
-  const predictionsFile = path.join(DATA_DIR, "predictions.json");
-
-  // Load matches to find competitionId
-  const matches = JSON.parse(fs.readFileSync(matchesFile, "utf8"));
-  const match = matches.find((m) => m.id === matchId);
-
-  if (!match) {
-    return res.status(404).json({ error: "Match not found" });
+  let users = readJSON("users.json");
+  if (users.find((u) => u.email === email)) {
+    return res.status(400).json({ error: "User already exists" });
   }
 
-  // Load existing predictions
-  const predictions = JSON.parse(fs.readFileSync(predictionsFile, "utf8"));
-
-  // Create new prediction object (with competitionId + names)
-  const newPrediction = {
-    id: Date.now(),
-    userId,
-    matchId,
-    predictedWinner,
-    predictedMargin,
-    competitionId: match.competitionId,
-    competitionName: match.competitionName,
-    teamA: match.teamA,
-    teamB: match.teamB,
-    date: match.kickoff,
+  const newUser = {
+    id: users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1,
+    email,
+    firstname,
+    surname,
+    isAdmin: false,
   };
 
-  predictions.push(newPrediction);
+  users.push(newUser);
+  writeJSON("users.json", users);
 
-  fs.writeFileSync(predictionsFile, JSON.stringify(predictions, null, 2));
-  res.json(newPrediction);
-});
-
-// GET predictions by userId
-app.get("/api/predictions/:userId", (req, res) => {
-  const predictionsFile = path.join(DATA_DIR, "predictions.json");
-  const predictions = JSON.parse(fs.readFileSync(predictionsFile, "utf8"));
-  const userPredictions = predictions.filter(
-    (p) => p.userId == req.params.userId
-  );
-  res.json(userPredictions);
-});
-
-// Leaderboard
-app.get("/api/leaderboard", (req, res) => {
-  const query = `
-    SELECT u.username, SUM(p.points_awarded) as total_points
-    FROM predictions p
-    JOIN users u ON p.user_id = u.id
-    GROUP BY u.id
-    ORDER BY total_points DESC
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) {
-      console.error("❌ Error fetching leaderboard:", err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
+  const token = jwt.sign({ id: newUser.id, email, isAdmin: false }, JWT_SECRET, {
+    expiresIn: "7d",
   });
+
+  res.json({ message: "User registered", token, user: newUser });
 });
 
-// ======================================================
-// Results updater (manual + cron)
-// ======================================================
-app.post("/api/admin/update-results", authenticateToken, async (req, res) => {
-  if (!req.user.isAdmin) return res.sendStatus(403);
+// Login
+app.post("/api/users/login", (req, res) => {
+  const { email } = req.body;
+  let users = readJSON("users.json");
+  const user = users.find((u) => u.email === email);
 
-  try {
-    await updateResultsFromSources(db);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("❌ Results updater failed:", err.message);
-    res.status(500).json({ error: err.message });
+  if (!user) {
+    return res.status(401).json({ error: "Invalid credentials" });
   }
-});
 
-// Cron job - run every hour
-cron.schedule("0 * * * *", () => {
-  console.log("⏰ Scheduled task: updating results...");
-  updateResultsFromSources(db).catch((err) =>
-    console.error("❌ Scheduled update failed:", err.message)
+  const token = jwt.sign(
+    { id: user.id, email: user.email, isAdmin: user.isAdmin },
+    JWT_SECRET,
+    { expiresIn: "7d" }
   );
+
+  res.json({ message: "Login successful", token, user });
 });
 
-// ======================================================
+// ✅ Get all users (admin)
+app.get("/api/users", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+  res.json(readJSON("users.json"));
+});
+
+// ✅ Update user (admin)
+app.put("/api/users/:id", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let users = readJSON("users.json");
+  const id = parseInt(req.params.id, 10);
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) return res.status(404).json({ error: "User not found" });
+
+  users[idx] = { ...users[idx], ...req.body };
+  writeJSON("users.json", users);
+  res.json(users[idx]);
+});
+
+// ✅ Delete user (admin)
+app.delete("/api/users/:id", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let users = readJSON("users.json");
+  const id = parseInt(req.params.id, 10);
+  users = users.filter((u) => u.id !== id);
+  writeJSON("users.json", users);
+
+  res.json({ message: "User deleted" });
+});
+
+// ==================== COMPETITIONS ====================
+app.get("/api/competitions", (req, res) => {
+  res.json(readJSON("competitions.json"));
+});
+
+app.post("/api/competitions", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let competitions = readJSON("competitions.json");
+  const newComp = { id: Date.now(), ...req.body };
+  competitions.push(newComp);
+  writeJSON("competitions.json", competitions);
+  res.json(newComp);
+});
+
+app.put("/api/competitions/:id", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let competitions = readJSON("competitions.json");
+  const id = parseInt(req.params.id, 10);
+  const idx = competitions.findIndex((c) => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Competition not found" });
+
+  competitions[idx] = { ...competitions[idx], ...req.body };
+  writeJSON("competitions.json", competitions);
+  res.json(competitions[idx]);
+});
+
+app.delete("/api/competitions/:id", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let competitions = readJSON("competitions.json");
+  const id = parseInt(req.params.id, 10);
+  competitions = competitions.filter((c) => c.id !== id);
+  writeJSON("competitions.json", competitions);
+
+  res.json({ message: "Competition deleted" });
+});
+
+// ==================== MATCHES ====================
+app.get("/api/matches", (req, res) => {
+  res.json(readJSON("matches.json"));
+});
+
+app.put("/api/matches/:id", authenticateToken, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: "Admin only" });
+
+  let matches = readJSON("matches.json");
+  const id = parseInt(req.params.id, 10);
+  const idx = matches.findIndex((m) => m.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Match not found" });
+
+  matches[idx] = { ...matches[idx], ...req.body };
+  writeJSON("matches.json", matches);
+  res.json(matches[idx]);
+});
+
+// ==================== PREDICTIONS ====================
+app.get("/api/predictions", authenticateToken, (req, res) => {
+  let predictions = readJSON("predictions.json");
+  predictions = predictions.filter((p) => p.userId === req.user.id);
+  res.json(predictions);
+});
+
+app.post("/api/predictions", authenticateToken, (req, res) => {
+  let predictions = readJSON("predictions.json");
+  const newPred = { id: Date.now(), userId: req.user.id, ...req.body };
+  predictions.push(newPred);
+  writeJSON("predictions.json", predictions);
+  res.json(newPred);
+});
+
+// ==================== LEADERBOARD ====================
+app.get("/api/leaderboard", (req, res) => {
+  const predictions = readJSON("predictions.json");
+  const users = readJSON("users.json");
+  const matches = readJSON("matches.json");
+
+  let leaderboard = users.map((u) => {
+    const userPreds = predictions.filter((p) => p.userId === u.id);
+    let points = 0;
+    let correct = 0;
+
+    userPreds.forEach((p) => {
+      const match = matches.find((m) => m.id === p.matchId);
+      if (match && match.result) {
+        const margin = Math.abs(match.result.margin);
+        const predMargin = Math.abs(p.margin);
+        if (match.result.winner === p.winner) {
+          points += 3;
+          correct++;
+          if (margin === predMargin) points += 2; // exact margin bonus
+        }
+      }
+    });
+
+    return {
+      userId: u.id,
+      name: `${u.firstname} ${u.surname}`,
+      points,
+      accuracy: userPreds.length ? ((correct / userPreds.length) * 100).toFixed(1) : 0,
+    };
+  });
+
+  leaderboard.sort((a, b) => b.points - a.points);
+  res.json(leaderboard);
+});
+
+// ==================== CRON JOB ====================
+cron.schedule("0 * * * *", async () => {
+  console.log("⏰ Running hourly match updater...");
+  await updateResultsFromSources();
+});
+
+// ==================== STATIC FRONTEND ====================
+app.use(express.static(path.join(__dirname, "frontend", "build")));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "build", "index.html"));
+});
+
 // Start server
-// ======================================================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
