@@ -72,12 +72,19 @@ async function writeJSON(file, data) {
 
 // ==================== Auth Middleware ====================
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.sendStatus(401);
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    console.error("❌ No token provided");
+    return res.sendStatus(401);
+  }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+    if (err) {
+      console.error("❌ JWT verification failed:", err.message);
+      return res.sendStatus(403);
+    }
+    console.log("✅ JWT verified, user:", user);
     req.user = user;
     next();
   });
@@ -213,7 +220,6 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
   res.json(predictions.filter((p) => p.userId === req.user.id));
 });
 
-// ==================== PREDICTIONS ====================
 app.post("/api/predictions", authenticateToken, async (req, res) => {
   let predictions = await readJSON("predictions.json");
 
