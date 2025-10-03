@@ -17,7 +17,13 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
 // Middleware
 app.use(express.json());
-app.use(cors({ origin: true, credentials: true }));
+// ✅ Allow only your deployed frontend, and allow credentials
+app.use(
+  cors({
+    origin: "https://rugby-frontend.onrender.com",
+    credentials: true,
+  })
+);
 
 // Helpers
 async function readJSON(file) {
