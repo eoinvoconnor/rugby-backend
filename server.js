@@ -18,7 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "secret";
 // ==================== Middleware ====================
 app.use(express.json());
 
-// ✅ CORS configuration — allow frontend + localhost
+// ✅ Robust CORS configuration
 const allowedOrigins = [
   "https://rugby-frontend.onrender.com",
   "http://localhost:3000",
@@ -27,11 +27,10 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1) {
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.warn("❌ CORS blocked origin:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     },
@@ -41,13 +40,13 @@ app.use(
   })
 );
 
-// ✅ Explicit preflight handler
+// ✅ Handle preflight requests cleanly
 app.options("*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", req.headers.origin);
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
-  res.sendStatus(200);
+  return res.sendStatus(204);
 });
 // ==================== Helpers ====================
 async function readJSON(file) {
@@ -72,19 +71,23 @@ async function writeJSON(file, data) {
 
 // ==================== Auth Middleware ====================
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) {
+    console.error("❌ No Authorization header");
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
   if (!token) {
-    console.error("❌ No token provided");
-    return res.sendStatus(401);
+    console.error("❌ Token missing after Bearer");
+    return res.status(401).json({ error: "Token missing" });
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
       console.error("❌ JWT verification failed:", err.message);
-      return res.sendStatus(403);
+      return res.status(403).json({ error: "Invalid or expired token" });
     }
-    console.log("✅ JWT verified, user:", user);
     req.user = user;
     next();
   });
