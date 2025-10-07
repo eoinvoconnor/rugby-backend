@@ -1,21 +1,19 @@
-// ==================== Imports ====================
+// ==================== IMPORTS ====================
+require("dotenv").config();
 const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
 const cron = require("node-cron");
-require("dotenv").config();
-
-const { updateResultsFromSources } = require("./utils/updateResultsFromSources");
+const { updateResultsFromSources } = require("./utils/resultsUpdater");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
 const DATA_DIR = path.join(__dirname, "data");
-const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
-// ==================== Middleware ====================
+// ==================== MIDDLEWARE ====================
 app.use(express.json());
 
 // ✅ Robust CORS configuration
@@ -48,28 +46,20 @@ app.options("*", (req, res) => {
   res.header("Access-Control-Allow-Credentials", "true");
   return res.sendStatus(204);
 });
-// ==================== Helpers ====================
-async function readJSON(file) {
-  const filePath = path.join(DATA_DIR, file);
-  try {
-    const data = await fs.readFile(filePath, "utf8");
-    return JSON.parse(data);
-  } catch (err) {
-    console.error(`Error reading ${file}:`, err);
-    return [];
-  }
+
+// ==================== HELPER FUNCTIONS ====================
+async function readJSON(filename) {
+  const filePath = path.join(DATA_DIR, filename);
+  const data = await fs.readFile(filePath, "utf8");
+  return JSON.parse(data || "[]");
 }
 
-async function writeJSON(file, data) {
-  const filePath = path.join(DATA_DIR, file);
-  try {
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error(`Error writing ${file}:`, err);
-  }
+async function writeJSON(filename, data) {
+  const filePath = path.join(DATA_DIR, filename);
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-// ==================== Auth Middleware ====================
+// ==================== AUTH MIDDLEWARE ====================
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   if (!authHeader) {
@@ -93,108 +83,45 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// ==================== Routes ====================
-
-// Health check
+// ==================== HEALTH CHECK ====================
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
-});
-
-// Debug: list data files
-app.get("/api/debug/files", async (req, res) => {
-  try {
-    const files = await fs.readdir(DATA_DIR);
-    const details = await Promise.all(
-      files.map(async (file) => {
-        const stats = await fs.stat(path.join(DATA_DIR, file));
-        const content = await fs.readFile(path.join(DATA_DIR, file), "utf8");
-        return {
-          file,
-          size: stats.size,
-          modified: stats.mtime,
-          preview: content.substring(0, 200),
-        };
-      })
-    );
-    res.json({ files: details });
-  } catch (err) {
-    res.status(500).json({ error: "Failed to list files" });
-  }
+  res.json({ status: "ok", time: new Date().toISOString() });
 });
 
 // ==================== USERS ====================
-app.post("/api/users/register", async (req, res) => {
-  const { email, firstname, surname, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ error: "Missing fields" });
-
-  let users = await readJSON("users.json");
-  if (users.find((u) => u.email === email)) {
-    return res.status(400).json({ error: "User already exists" });
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const newUser = {
-    id: users.length ? users[users.length - 1].id + 1 : 1,
-    email,
-    firstname,
-    surname,
-    password: hashedPassword,
-    isAdmin: false,
-  };
-
-  users.push(newUser);
-  await writeJSON("users.json", users);
-
-  const token = jwt.sign(
-    { id: newUser.id, email: newUser.email, isAdmin: newUser.isAdmin },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-
-  res.json({
-    token,
-    user: { id: newUser.id, email, firstname, surname, isAdmin: false },
-  });
+app.get("/api/users", authenticateToken, async (req, res) => {
+  const users = await readJSON("users.json");
+  res.json(users);
 });
 
-// ==================== LOGIN ====================
 app.post("/api/users/login", async (req, res) => {
   const { email, firstname, surname } = req.body;
-  let users = await readJSON("users.json");
-
+  const users = await readJSON("users.json");
   let user = users.find((u) => u.email === email);
 
-  // If user doesn’t exist, create one
   if (!user) {
     user = {
-      id: users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1,
+      id: users.length + 1,
       email,
-      firstname: firstname || "",
-      surname: surname || "",
-      isAdmin: email === "eoinvoconnor@gmail.com", // only you get admin
+      firstname,
+      surname,
+      isAdmin: false,
     };
     users.push(user);
     await writeJSON("users.json", users);
   }
 
-  // Generate JWT
   const token = jwt.sign(
-    { id: user.id, email: user.email, isAdmin: user.isAdmin },
+    {
+      id: user.id,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
     JWT_SECRET,
     { expiresIn: "7d" }
   );
 
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      email: user.email,
-      firstname: user.firstname,
-      surname: user.surname,
-      isAdmin: user.isAdmin,
-    },
-  });
+  res.json({ token, user });
 });
 
 // ==================== COMPETITIONS ====================
@@ -203,12 +130,16 @@ app.get("/api/competitions", async (req, res) => {
   res.json(competitions);
 });
 
-app.post("/api/competitions", authenticateToken, async (req, res) => {
-  if (!req.user.isAdmin) return res.sendStatus(403);
-  let competitions = await readJSON("competitions.json");
-  competitions.push(req.body);
-  await writeJSON("competitions.json", competitions);
-  res.json({ success: true });
+app.put("/api/competitions/:id", authenticateToken, async (req, res) => {
+  const competitions = await readJSON("competitions.json");
+  const index = competitions.findIndex((c) => c.id === parseInt(req.params.id));
+  if (index !== -1) {
+    competitions[index] = { ...competitions[index], ...req.body };
+    await writeJSON("competitions.json", competitions);
+    res.json(competitions[index]);
+  } else {
+    res.status(404).json({ error: "Competition not found" });
+  }
 });
 
 // ==================== MATCHES ====================
@@ -225,29 +156,49 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
 
 app.post("/api/predictions", authenticateToken, async (req, res) => {
   let predictions = await readJSON("predictions.json");
+  const newPrediction = { ...req.body, userId: req.user.id };
 
-  // Accept single object (what frontend sends)
-  const incoming = req.body;
-
-  // Force userId from JWT for safety, ignore spoofed userId
-  const newPrediction = {
-    ...incoming,
-    userId: req.user.id,
-  };
-
-  // Remove existing prediction for this user + match
+  // Replace any existing prediction for same match + user
   predictions = predictions.filter(
     (p) => !(p.userId === req.user.id && p.matchId === newPrediction.matchId)
   );
 
-  // Save new one
   predictions.push(newPrediction);
   await writeJSON("predictions.json", predictions);
-
   res.json({ success: true });
 });
 
-// ==================== Start Server ====================
+// ==================== RESULTS UPDATE CRON ====================
+cron.schedule("0 */6 * * *", async () => {
+  console.log("🕒 Scheduled task: updating results...");
+  await updateResultsFromSources();
+});
+
+// ==================== DEBUG ROUTES ====================
+app.get("/api/debug/files", async (req, res) => {
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const details = await Promise.all(
+      files.map(async (file) => {
+        const stat = await fs.stat(path.join(DATA_DIR, file));
+        const preview = await fs
+          .readFile(path.join(DATA_DIR, file), "utf8")
+          .then((content) => content.slice(0, 200));
+        return {
+          file,
+          size: stat.size,
+          modified: stat.mtime,
+          preview,
+        };
+      })
+    );
+    res.json({ files: details });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to list files", details: err });
+  }
+});
+
+// ==================== START SERVER ====================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
