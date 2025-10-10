@@ -93,6 +93,39 @@ app.get("/api/users", authenticateToken, async (req, res) => {
   const users = await readJSON("users.json");
   res.json(users);
 });
+// Add new user (Admin only)
+app.post("/api/users", authenticateToken, async (req, res) => {
+  try {
+    const { firstname, surname, email, isAdmin } = req.body;
+    if (!firstname || !surname || !email) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const users = await readJSON("users.json");
+
+    // Check for duplicates by email
+    if (users.some((u) => u.email === email)) {
+      return res.status(400).json({ error: "User with that email already exists" });
+    }
+
+    const newUser = {
+      id: users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1,
+      firstname,
+      surname,
+      email,
+      isAdmin: !!isAdmin,
+      createdAt: new Date().toISOString(),
+    };
+
+    users.push(newUser);
+    await writeJSON("users.json", users);
+
+    res.status(201).json(newUser);
+  } catch (err) {
+    console.error("❌ Error adding user:", err);
+    res.status(500).json({ error: "Failed to add user" });
+  }
+});
 
 app.post("/api/users/login", async (req, res) => {
   const { email, firstname, surname } = req.body;
