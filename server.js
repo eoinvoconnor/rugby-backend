@@ -174,6 +174,23 @@ app.delete("/api/users/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Failed to delete user" });
   }
 });
+// Update an existing user (Admin only)
+app.put("/api/users/:id", authenticateToken, async (req, res) => {
+  try {
+    const users = await readJSON("users.json");
+    const index = users.findIndex((u) => u.id === parseInt(req.params.id));
+    if (index === -1)
+      return res.status(404).json({ error: "User not found" });
+
+    users[index] = { ...users[index], ...req.body };
+    await writeJSON("users.json", users);
+    res.json(users[index]);
+  } catch (err) {
+    console.error("❌ Failed to update user:", err);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
 
 // ==================== COMPETITIONS ====================
 app.get("/api/competitions", async (req, res) => {
