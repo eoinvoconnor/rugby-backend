@@ -123,6 +123,24 @@ app.post("/api/users/login", async (req, res) => {
 
   res.json({ token, user });
 });
+app.delete("/api/users/:id", authenticateToken, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: "Invalid user ID" });
+
+    const users = await readJSON("users.json");
+    const updatedUsers = users.filter((u) => u.id !== userId);
+    if (updatedUsers.length === users.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    await writeJSON("users.json", updatedUsers);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error deleting user:", err);
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
 
 // ==================== COMPETITIONS ====================
 app.get("/api/competitions", async (req, res) => {
