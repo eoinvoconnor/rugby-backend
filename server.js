@@ -209,6 +209,50 @@ app.put("/api/competitions/:id", authenticateToken, async (req, res) => {
     res.status(404).json({ error: "Competition not found" });
   }
 });
+// Add new competition
+app.post("/api/competitions", authenticateToken, async (req, res) => {
+  try {
+    const { name, url, color } = req.body;
+    if (!name || !url) {
+      return res.status(400).json({ error: "Missing name or URL" });
+    }
+
+    const competitions = await readJSON("competitions.json");
+    const newCompetition = {
+      id: competitions.length ? Math.max(...competitions.map((c) => c.id)) + 1 : 1,
+      name,
+      url,
+      color: color || "#1976d2",
+      createdAt: new Date().toISOString(),
+    };
+
+    competitions.push(newCompetition);
+    await writeJSON("competitions.json", competitions);
+    res.status(201).json(newCompetition);
+  } catch (err) {
+    console.error("❌ Failed to add competition:", err);
+    res.status(500).json({ error: "Failed to add competition" });
+  }
+});
+
+// Delete a competition
+app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
+  try {
+    const competitions = await readJSON("competitions.json");
+    const id = parseInt(req.params.id);
+    const filtered = competitions.filter((c) => c.id !== id);
+
+    if (filtered.length === competitions.length) {
+      return res.status(404).json({ error: "Competition not found" });
+    }
+
+    await writeJSON("competitions.json", filtered);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Failed to delete competition:", err);
+    res.status(500).json({ error: "Failed to delete competition" });
+  }
+});
 
 // ==================== MATCHES ====================
 app.get("/api/matches", async (req, res) => {
