@@ -255,9 +255,99 @@ app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
 });
 
 // ==================== MATCHES ====================
-app.get("/api/matches", async (req, res) => {
-  const matches = await readJSON("matches.json");
-  res.json(matches);
+app.get("/api/matches", (req, res) => {
+  let { sort, order, competitionId, team, from, to } = req.query;
+  let results = [...matches];
+
+  // Filter by competition
+  if (competitionId) {
+    results = results.filter((m) => m.competitionId === parseInt(competitionId));
+  }
+
+  // Filter by team OR competition name (enhanced search)
+  if (team) {
+    const t = team.toLowerCase();
+    results = results.filter(
+      (m) =>
+        m.teamA.toLowerCase().includes(t) ||
+        m.teamB.toLowerCase().includes(t) ||
+        m.competitionName.toLowerCase().includes(t)
+    );
+  }
+
+  // Date filtering
+  if (from) {
+    const fromDate = new Date(from);
+    results = results.filter((m) => new Date(m.kickoff) >= fromDate);
+  }
+  if (to) {
+    const toDate = new Date(to);
+    results = results.filter((m) => new Date(m.kickoff) <= toDate);
+  }
+
+  // Sorting
+  if (sort) {
+    const dir = order === "desc" ? -1 : 1;
+    results.sort((a, b) => {
+      if (sort === "date") {
+        return (new Date(a.kickoff) - new Date(b.kickoff)) * dir;
+      } else if (sort === "competition") {
+        return a.competitionName.localeCompare(b.competitionName) * dir;
+      } else if (sort === "team") {
+        return a.teamA.localeCompare(b.teamA) * dir;
+      }
+      return 0;
+    });
+  }
+
+  res.json(results);
+});
+
+// Add a match
+app.post("/api/matches", (req, res) => {
+  const { competitionId, teamA, teamB, kickoff } = req.body;
+  if (!competitionId || !teamA || !teamB || !kickoff) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+
+  const comp = competitions.find((c) => c.id === competitionId);
+
+  const match = {
+    id: matches.length ? Math.max(...matches.map((m) => m.id)) + 1 : 1,
+    competitionId,
+    competitionName: comp ? comp.name : "Unknown",
+    competitionColor: comp ? comp.color : "#888888",
+    teamA,
+    teamB,
+    kickoff,
+    result: { winner: null, margin: null },
+  };
+
+  matches.push(match);
+  save(MATCHES_FILE, matches);
+  res.json(match);
+});
+
+// Edit a match
+app.put("/api/matches/:id", (req, res) => {
+  const matchId = parseInt(req.params.id);
+  const match = matches.find((m) => m.id === matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+
+  Object.assign(match, req.body);
+  save(MATCHES_FILE, matches);
+  res.json(match);
+});
+
+// Delete a match
+app.delete("/api/matches/:id", (req, res) => {
+  const matchId = parseInt(req.params.id);
+  const index = matches.findIndex((m) => m.id === matchId);
+  if (index === -1) return res.status(404).json({ error: "Match not found" });
+
+  matches.splice(index, 1);
+  save(MATCHES_FILE, matches);
+  res.json({ success: true });
 });
 
 // ==================== PREDICTIONS ====================
