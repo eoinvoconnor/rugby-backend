@@ -17,21 +17,38 @@ function saveJSON(file, data) {
 }
 
 /**
- * Convert webcal:// to https:// for axios
+/**
+ * Normalize feed URLs for calendar imports
+ * - Converts webcal:// → https://
+ * - Ensures no trailing spaces or hidden characters
+ * - Prepares ECAL and other calendar URLs for fetch
  */
 function normalizeUrl(url) {
-  if (url.startsWith("webcal://")) {
-    return url.replace("webcal://", "https://");
-  }
-  return url;
-}
+  if (!url) return "";
 
+  // Trim and sanitize
+  let normalized = url.trim();
+
+  // Convert webcal:// → https://
+  if (normalized.startsWith("webcal://")) {
+    normalized = normalized.replace("webcal://", "https://");
+  }
+
+  // Some ECAL URLs break if encoded — so avoid encodeURI()
+  return normalized;
+}
 /**
  * Import matches from ICS feed
  */
 async function importMatchesFromICS(comp) {
   const url = normalizeUrl(comp.url);
-  const res = await axios.get(url);
+  const res = await axios.get(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Rugby Predictor/1.0)",
+      "Accept": "text/calendar, */*;q=0.9",
+    },
+    timeout: 15000, // optional safety for slow feeds
+  });
   const events = ical.parseICS(res.data);
 
   let matches = loadJSON(matchesFile);
