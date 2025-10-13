@@ -254,6 +254,33 @@ app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
   }
 });
 
+// ==================== DATA CACHES ====================
+// Load data files once when the server starts
+let matches = [];
+let competitions = [];
+
+const MATCHES_FILE = path.join(DATA_DIR, "matches.json");
+const COMPETITIONS_FILE = path.join(DATA_DIR, "competitions.json");
+
+// Helper to load both JSON files into memory
+async function loadData() {
+  try {
+    matches = await readJSON("matches.json");
+    competitions = await readJSON("competitions.json");
+    console.log(`✅ Loaded ${matches.length} matches and ${competitions.length} competitions`);
+  } catch (err) {
+    console.error("❌ Failed to load initial data:", err);
+  }
+}
+
+// Call it once at startup
+loadData();
+
+// Helper to save matches back to disk
+async function save(filePath, data) {
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+}
+
 // ==================== MATCHES ====================
 app.get("/api/matches", (req, res) => {
   let { sort, order, competitionId, team, from, to } = req.query;
