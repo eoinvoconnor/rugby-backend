@@ -253,6 +253,53 @@ app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Failed to delete competition" });
   }
 });
+// Refresh a single competition's feed and update its matches
+app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) => {
+  const competitions = await readJSON("competitions.json");
+  const comp = competitions.find((c) => c.id === parseInt(req.params.id));
+  if (!comp) return res.status(404).json({ error: "Competition not found" });
+
+  try {
+    const normalizedUrl = normalizeUrl(comp.url);
+    const axios = (await import("axios")).default;
+    const ical = (await import("node-ical")).default;
+
+    console.log(`🔄 Refreshing competition: ${comp.name}`);
+
+    const response = await axios.get(normalizedUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (rugby-app)",
+        Accept: "text/calendar",
+      },
+    });
+
+    const parsed = ical.parseICS(response.data);
+    const newMatches = Object.values(parsed)
+      .filter((e) => e.type === "VEVENT")
+      .map((event) => ({
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        competitionId: comp.id,
+        competitionName: comp.name,
+        competitionColor: comp.color,
+        teamA: event.summary?.split(" vs ")[0] || "TBD",
+        teamB: event.summary?.split(" vs ")[1] || "TBD",
+        kickoff: event.start,
+        result: { winner: null, margin: null },
+      }));
+
+    // Replace old matches for this competition
+    const matches = await readJSON("matches.json");
+    const filtered = matches.filter((m) => m.competitionId !== comp.id);
+    const updatedMatches = [...filtered, ...newMatches];
+    await writeJSON("matches.json", updatedMatches);
+
+    console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
+    res.json({ message: `Updated ${newMatches.length} matches for ${comp.name}` });
+  } catch (err) {
+    console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ==================== DATA CACHES ====================
 // Load data files once when the server starts
