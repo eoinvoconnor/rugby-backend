@@ -58,6 +58,84 @@ async function writeJSON(filename, data) {
   const filePath = path.join(DATA_DIR, filename);
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
+// --- ICS helpers (place near other helpers) ---
+const axios = require("axios");
+const ical = require("node-ical"); // already in your deps
+
+function normalizeUrl(url) {
+  return url.startsWith("webcal://") ? url.replace("webcal://", "https://") : url;
+}
+
+async function fetchIcsText(url) {
+  const response = await axios.get(normalizeUrl(url), {
+    responseType: "text",
+    headers: { "User-Agent": "rugby-predictions/1.0" },
+    timeout: 20000,
+  });
+  return response.data;
+}
+
+/**
+ * Very light parser that expects event.summary like "Team A vs Team B" (or "v")
+ * and a valid DTSTART for kickoff.
+ */
+function parseIcsToMatches(icsText, comp) {
+  const events = ical.sync.parseICS(icsText);
+  const out = [];
+  for (const k of Object.keys(events)) {
+    const ev = events[k];
+    if (!ev || ev.type !== "VEVENT") continue;
+
+    const kickoff = ev.start ? new Date(ev.start) : null;
+    const summary = (ev.summary || "").trim();
+
+    // Try split on " vs " or " v "
+    let teamA = null, teamB = null;
+    if (summary.includes(" vs ")) {
+      [teamA, teamB] = summary.split(" vs ").map(s => s.trim());
+    } else if (summary.includes(" v ")) {
+      [teamA, teamB] = summary.split(" v ").map(s => s.trim());
+    }
+
+    if (!kickoff || !teamA || !teamB) continue;
+
+    out.push({
+      // id assigned during upsert
+      competitionId: comp.id,
+      competitionName: comp.name,
+      competitionColor: comp.color || "#888888",
+      teamA,
+      teamB,
+      kickoff: kickoff.toISOString(),
+      // keep your current result shape
+      result: { winner: null, margin: null },
+    });
+  }
+  return out;
+}
+
+async function upsertMatchesForCompetition(comp, newMatches) {
+  let matches = await readJSON("matches.json");
+
+  // De-dup by same comp + same kickoff + same two teams (order-insensitive)
+  const seen = new Set(
+    matches.map(m => `${m.competitionId}|${m.kickoff}|${[m.teamA, m.teamB].sort().join("|")}`)
+  );
+
+  for (const m of newMatches) {
+    const key = `${m.competitionId}|${m.kickoff}|${[m.teamA, m.teamB].sort().join("|")}`;
+    if (!seen.has(key)) {
+      // assign id
+      m.id = matches.length ? Math.max(...matches.map(x => x.id)) + 1 : 1;
+      matches.push(m);
+      seen.add(key);
+    }
+  }
+
+  await writeJSON("matches.json", matches);
+  return matches.length;
+}
+
 
 // ==================== AUTH MIDDLEWARE ====================
 function authenticateToken(req, res, next) {
@@ -271,21 +349,34 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
         "User-Agent": "Mozilla/5.0 (rugby-app)",
         Accept: "text/calendar",
       },
+      responseType: "text",
     });
 
     const parsed = ical.parseICS(response.data);
     const newMatches = Object.values(parsed)
       .filter((e) => e.type === "VEVENT")
-      .map((event) => ({
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        competitionId: comp.id,
-        competitionName: comp.name,
-        competitionColor: comp.color,
-        teamA: event.summary?.split(" vs ")[0] || "TBD",
-        teamB: event.summary?.split(" vs ")[1] || "TBD",
-        kickoff: event.start,
-        result: { winner: null, margin: null },
-      }));
+      .map((event) => {
+        const summary = (event.summary || "").trim();
+
+        // 🧠 Handle multiple possible separators
+        const splitRegex = /\s(vs|v|–|:|-)\s/i;
+        const parts = summary.split(splitRegex).map((s) => s.trim()).filter(Boolean);
+
+        const teamA = parts[0] || "TBD";
+        const teamB = parts[2] || parts[1] || "TBD";
+
+        return {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          competitionId: comp.id,
+          competitionName: comp.name,
+          competitionColor: comp.color,
+          teamA,
+          teamB,
+          kickoff: event.start ? new Date(event.start).toISOString() : null,
+          result: { winner: null, margin: null },
+        };
+      })
+      .filter((m) => m.kickoff); // remove invalid entries
 
     // Replace old matches for this competition
     const matches = await readJSON("matches.json");
@@ -293,14 +384,22 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
     const updatedMatches = [...filtered, ...newMatches];
     await writeJSON("matches.json", updatedMatches);
 
+    // Update lastRefreshed timestamp for the competition
+    const updatedComps = competitions.map((c) =>
+      c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+    );
+    await writeJSON("competitions.json", updatedComps);
+
     console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
-    res.json({ message: `Updated ${newMatches.length} matches for ${comp.name}` });
+    res.json({
+      message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
+      added: newMatches.length,
+    });
   } catch (err) {
     console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
-
 // ==================== DATA CACHES ====================
 // Load data files once when the server starts
 let matches = [];
