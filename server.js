@@ -1,13 +1,24 @@
 // ==================== IMPORTS ====================
-require("dotenv").config();
-const express = require("express");
-const fs = require("fs").promises;
-const path = require("path");
-const cors = require("cors");
-const jwt = require("jsonwebtoken");
-const cron = require("node-cron");
-const { updateResultsFromSources } = require("./utils/resultsUpdater");
+// ES Module version — compatible with "type": "module"
 
+import dotenv from "dotenv";
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import cors from "cors";
+import jwt from "jsonwebtoken";
+import cron from "node-cron";
+import axios from "axios";
+import ical from "node-ical";
+import { updateResultsFromSources } from "./utils/resultsUpdater.js";
+import { fileURLToPath } from "url";
+
+// __dirname shim for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// --- ENV & App setup ---
+dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
