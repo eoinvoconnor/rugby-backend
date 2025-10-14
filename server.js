@@ -143,7 +143,15 @@ async function upsertMatchesForCompetition(comp, newMatches) {
   await writeJSON("matches.json", matches);
   return matches.length;
 }
-
+// ----- SUPERADMIN GUARD -----
+function requireSuperAdmin(req, res, next) {
+  // you can also make this an env var if you want: process.env.SUPERADMIN_EMAIL
+  const SUPERADMIN_EMAIL = "eoinvoconnor@gmail.com";
+  if (!req.user || req.user.email !== SUPERADMIN_EMAIL) {
+    return res.status(403).json({ error: "SuperAdmin only" });
+  }
+  next();
+}
 
 // ==================== AUTH MIDDLEWARE ====================
 function authenticateToken(req, res, next) {
@@ -281,7 +289,11 @@ app.put("/api/users/:id", authenticateToken, async (req, res) => {
 // ==================== COMPETITIONS ====================
 app.get("/api/competitions", async (req, res) => {
   const competitions = await readJSON("competitions.json");
-  res.json(competitions);
+  const includeArchived = String(req.query.includeArchived || "") === "1";
+  const filtered = includeArchived
+    ? competitions
+    : competitions.filter(c => !c.isArchived);
+  res.json(filtered);
 });
 
 app.put("/api/competitions/:id", authenticateToken, async (req, res) => {
@@ -411,6 +423,28 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
       responseType: "text",
     });
 
+// Soft delete (archive)
+app.post("/api/competitions/:id/archive", authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const competitions = await readJSON("competitions.json");
+  const idx = competitions.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Competition not found" });
+  competitions[idx].isArchived = true;
+  await writeJSON("competitions.json", competitions);
+  res.json({ success: true, competition: competitions[idx] });
+});
+
+// Undo archive
+app.post("/api/competitions/:id/unarchive", authenticateToken, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const competitions = await readJSON("competitions.json");
+  const idx = competitions.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Competition not found" });
+  competitions[idx].isArchived = false;
+  await writeJSON("competitions.json", competitions);
+  res.json({ success: true, competition: competitions[idx] });
+});
+
 // Parse ICS into matches (robust "Team A vs Team B" handling)
 const parsed = ical.parseICS(response.data);
 const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
@@ -466,6 +500,48 @@ const newMatches = Object.values(parsed)
     res.status(500).json({ error: err.message });
   }
 });
+
+// ***** DANGER: SUPERADMIN HARD DELETE W/ CASCADE *****
+app.delete(
+  "/api/superadmin/competitions/:id",
+  authenticateToken,
+  requireSuperAdmin,
+  async (req, res) => {
+    const id = parseInt(req.params.id);
+
+    const competitions = await readJSON("competitions.json");
+    const matches = await readJSON("matches.json");
+    const predictions = await readJSON("predictions.json");
+
+    const comp = competitions.find(c => c.id === id);
+    if (!comp) return res.status(404).json({ error: "Competition not found" });
+
+    // Remove competition
+    const newComps = competitions.filter(c => c.id !== id);
+
+    // Remove matches for this comp
+    const removedMatches = matches.filter(m => m.competitionId === id);
+    const removedMatchIds = new Set(removedMatches.map(m => m.id));
+    const newMatches = matches.filter(m => !removedMatchIds.has(m.id));
+
+    // Remove predictions for those matches
+    const newPredictions = predictions.filter(p => !removedMatchIds.has(p.matchId));
+
+    await writeJSON("competitions.json", newComps);
+    await writeJSON("matches.json", newMatches);
+    await writeJSON("predictions.json", newPredictions);
+
+    res.json({
+      success: true,
+      deleted: {
+        competition: comp.id,
+        matches: removedMatches.length,
+        predictions: predictions.length - newPredictions.length,
+      },
+    });
+  }
+);
+
 // ==================== DATA CACHES ====================
 // Load data files once when the server starts
 let matches = [];
@@ -494,10 +570,24 @@ async function save(filePath, data) {
 }
 
 // ==================== MATCHES ====================
-app.get("/api/matches", (req, res) => {
-  let { sort, order, competitionId, team, from, to } = req.query;
-  let results = [...matches];
+app.get("/api/matches", async (req, res) => {
+  const allMatches = await readJSON("matches.json");
+  const competitions = await readJSON("competitions.json");
 
+  const includeArchived = String(req.query.includeArchived || "") === "1";
+
+  // map of archived competition ids
+  const archivedIds = new Set(
+    competitions.filter(c => c.isArchived).map(c => c.id)
+  );
+
+  let results = includeArchived
+    ? allMatches
+    : allMatches.filter(m => !archivedIds.has(m.competitionId));
+
+  // (keep your existing sorting/filtering params logic here, if you have it)
+  res.json(results);
+});
   // Filter by competition
   if (competitionId) {
     results = results.filter((m) => m.competitionId === parseInt(competitionId));
