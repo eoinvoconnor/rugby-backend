@@ -318,9 +318,8 @@ app.post("/api/competitions", authenticateToken, async (req, res) => {
 try {
   // reuse the same logic as your refresh route
   const normalizedUrl = normalizeUrl(newCompetition.url);
-  const axios = (await import("axios")).default;
-  const ical = (await import("node-ical")).default;
-
+  const axios = require("axios");
+  const ical = require("node-ical");
   const response = await axios.get(normalizedUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (rugby-app)",
@@ -396,9 +395,8 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
 
   try {
     const normalizedUrl = normalizeUrl(comp.url);
-    const axios = (await import("axios")).default;
-    const ical = (await import("node-ical")).default;
-
+    const axios = require("axios");
+    const ical = require("node-ical");
     console.log(`🔄 Refreshing competition: ${comp.name}`);
 
     const response = await axios.get(normalizedUrl, {
