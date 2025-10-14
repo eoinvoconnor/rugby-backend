@@ -384,12 +384,13 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
     const updatedMatches = [...filtered, ...newMatches];
     await writeJSON("matches.json", updatedMatches);
 
-    // Update lastRefreshed timestamp for the competition
-    const updatedComps = competitions.map((c) =>
+// ✅ Update lastRefreshed safely: re-read latest competitions file first
+    const latestComps = await readJSON("competitions.json");
+    const updatedComps = latestComps.map((c) =>
       c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
     );
     await writeJSON("competitions.json", updatedComps);
-
+    
     console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
     res.json({
       message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
