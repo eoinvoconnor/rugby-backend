@@ -312,6 +312,63 @@ app.post("/api/competitions", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Failed to add competition" });
   }
 });
+// after: await writeJSON("competitions.json", competitions);
+
+// Immediately refresh this competition so matches appear
+try {
+  // reuse the same logic as your refresh route
+  const normalizedUrl = normalizeUrl(newCompetition.url);
+  const axios = (await import("axios")).default;
+  const ical = (await import("node-ical")).default;
+
+  const response = await axios.get(normalizedUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (rugby-app)",
+      Accept: "text/calendar",
+    },
+  });
+
+  const parsed = ical.parseICS(response.data);
+  const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
+
+  const freshMatches = Object.values(parsed)
+    .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
+    .map((event) => {
+      const m = String(event.summary).match(vsRegex);
+      const teamA = m ? m[1].trim() : "TBD";
+      const teamB = m ? m[2].trim() : "TBD";
+      const kickoffISO = (event.start instanceof Date)
+        ? event.start.toISOString()
+        : new Date(event.start).toISOString();
+
+      return {
+        id: Date.now() + Math.floor(Math.random() * 1000000),
+        competitionId: newCompetition.id,
+        competitionName: newCompetition.name,
+        competitionColor: newCompetition.color || "#888",
+        teamA,
+        teamB,
+        kickoff: kickoffISO,
+        result: { winner: null, margin: null },
+      };
+    });
+
+  // Replace old matches for this comp (there shouldn't be any yet, but safe)
+  const matchesNow = await readJSON("matches.json");
+  const filtered = matchesNow.filter((m) => m.competitionId !== newCompetition.id);
+  await writeJSON("matches.json", [...filtered, ...freshMatches]);
+
+  // also bump lastRefreshed safely
+  const latestComps = await readJSON("competitions.json");
+  const updatedComps = latestComps.map((c) =>
+    c.id === newCompetition.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+  );
+  await writeJSON("competitions.json", updatedComps);
+
+  console.log(`✅ Added ${freshMatches.length} matches for new comp ${newCompetition.name}`);
+} catch (e) {
+  console.error("⚠️ Auto-refresh after add failed:", e.message);
+}
 
 // Delete a competition
 app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
