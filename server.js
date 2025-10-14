@@ -352,31 +352,37 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
       responseType: "text",
     });
 
-    const parsed = ical.parseICS(response.data);
-    const newMatches = Object.values(parsed)
-      .filter((e) => e.type === "VEVENT")
-      .map((event) => {
-        const summary = (event.summary || "").trim();
+// Parse ICS into matches (robust "Team A vs Team B" handling)
+const parsed = ical.parseICS(response.data);
+const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
 
-        // 🧠 Handle multiple possible separators
-        const splitRegex = /\s(vs|v|–|:|-)\s/i;
-        const parts = summary.split(splitRegex).map((s) => s.trim()).filter(Boolean);
+const newMatches = Object.values(parsed)
+  .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
+  .map((event) => {
+    let teamA = "TBD";
+    let teamB = "TBD";
+    const m = String(event.summary).match(vsRegex);
+    if (m) {
+      teamA = m[1].trim();
+      teamB = m[2].trim();
+    }
 
-        const teamA = parts[0] || "TBD";
-        const teamB = parts[2] || parts[1] || "TBD";
+    const kickoffISO = (event.start instanceof Date)
+      ? event.start.toISOString()
+      : new Date(event.start).toISOString();
 
-        return {
-          id: Date.now() + Math.floor(Math.random() * 1000),
-          competitionId: comp.id,
-          competitionName: comp.name,
-          competitionColor: comp.color,
-          teamA,
-          teamB,
-          kickoff: event.start ? new Date(event.start).toISOString() : null,
-          result: { winner: null, margin: null },
-        };
-      })
-      .filter((m) => m.kickoff); // remove invalid entries
+    return {
+      id: Date.now() + Math.floor(Math.random() * 1000000),
+      competitionId: comp.id,
+      competitionName: comp.name,
+      competitionColor: comp.color || "#888",
+      teamA,
+      teamB,
+      kickoff: kickoffISO,
+      result: { winner: null, margin: null },
+    };
+  })
+        .filter((m) => m.kickoff); // remove invalid entries
 
     // Replace old matches for this competition
     const matches = await readJSON("matches.json");
@@ -390,7 +396,7 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
       c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
     );
     await writeJSON("competitions.json", updatedComps);
-    
+
     console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
     res.json({
       message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
