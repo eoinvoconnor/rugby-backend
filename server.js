@@ -162,17 +162,28 @@ async function refreshCompetitionById(id) {
   const parsed = ical.parseICS(response.data);
   const newMatches = Object.values(parsed)
     .filter((e) => e.type === "VEVENT")
-    .map((event) => ({
-      id: Date.now() + Math.floor(Math.random() * 1000000),
-      competitionId: comp.id,
-      competitionName: comp.name,
-      competitionColor: comp.color,
-      teamA: event.summary?.split(" vs ")[0]?.trim() || "TBD",
-      teamB: event.summary?.split(" vs ")[1]?.trim() || "TBD",
-      kickoff: event.start,
-      result: { winner: null, margin: null },
-    }));
-
+    .map((event) => {
+      // --- Clean up the summary text ---
+      let rawSummary = event.summary || "";
+      rawSummary = rawSummary
+        .replace(/🏉/g, "")          // remove rugby ball emoji
+        .replace(/^URC:\s*/i, "")    // remove "URC:" prefix (case-insensitive)
+        .trim();
+    
+      // Split into team names
+      const [teamA, teamB] = rawSummary.split(" vs ").map((t) => t?.trim() || "TBD");
+    
+      return {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        competitionId: comp.id,
+        competitionName: comp.name,
+        competitionColor: comp.color,
+        teamA,
+        teamB,
+        kickoff: event.start,
+        result: { winner: null, margin: null },
+      };
+    });
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
   const updatedMatches = [...filtered, ...newMatches];
