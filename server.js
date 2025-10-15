@@ -143,6 +143,53 @@ async function upsertMatchesForCompetition(comp, newMatches) {
   await writeJSON("matches.json", matches);
   return matches.length;
 }
+
+async function refreshCompetitionById(id) {
+  const competitions = await readJSON("competitions.json");
+  const comp = competitions.find((c) => c.id === Number(id));
+  if (!comp) throw new Error("Competition not found");
+
+  const normalizedUrl = normalizeUrl(comp.url);
+  const axios = require("axios");
+  const ical = require("node-ical");
+
+  const response = await axios.get(normalizedUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (rugby-app)",
+      Accept: "text/calendar",
+    },
+    responseType: "text",
+    timeout: 20000,
+  });
+
+  const parsed = ical.parseICS(response.data);
+  const newMatches = Object.values(parsed)
+    .filter((e) => e.type === "VEVENT")
+    .map((event) => ({
+      id: Date.now() + Math.floor(Math.random() * 1000000),
+      competitionId: comp.id,
+      competitionName: comp.name,
+      competitionColor: comp.color,
+      teamA: event.summary?.split(" vs ")[0]?.trim() || "TBD",
+      teamB: event.summary?.split(" vs ")[1]?.trim() || "TBD",
+      kickoff: event.start,
+      result: { winner: null, margin: null },
+    }));
+
+  const matches = await readJSON("matches.json");
+  const filtered = matches.filter((m) => m.competitionId !== comp.id);
+  const updatedMatches = [...filtered, ...newMatches];
+  await writeJSON("matches.json", updatedMatches);
+
+  // bump lastRefreshed on this comp
+  const updatedComps = competitions.map((c) =>
+    c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+  );
+  await writeJSON("competitions.json", updatedComps);
+
+  return { added: newMatches.length };
+}
+
 // ----- SUPERADMIN GUARD -----
 function requireSuperAdmin(req, res, next) {
   // you can also make this an env var if you want: process.env.SUPERADMIN_EMAIL
@@ -326,8 +373,19 @@ app.post("/api/competitions", authenticateToken, async (req, res) => {
 
     competitions.push(newCompetition);
     await writeJSON("competitions.json", competitions);
+
+    // ✅ Safely refresh this one competition you just added
+    try {
+      const refreshed = await refreshCompetitionById(newCompetition.id);
+      console.log(
+        `✅ Auto-refreshed "${newCompetition.name}" — added ${refreshed.added} matches`
+      );
+    } catch (e) {
+      console.warn("⚠️ Auto-refresh after add failed:", e.message);
+    }
+    
     res.status(201).json(newCompetition);
-  } catch (err) {
+    } catch (err) {
     console.error("❌ Failed to add competition:", err);
     res.status(500).json({ error: "Failed to add competition" });
   }
@@ -571,24 +629,71 @@ async function save(filePath, data) {
 
 // ==================== MATCHES ====================
 app.get("/api/matches", async (req, res) => {
-  const allMatches = await readJSON("matches.json");
-  const competitions = await readJSON("competitions.json");
+  try {
+    const all = await readJSON("matches.json");
 
-  const includeArchived = String(req.query.includeArchived || "") === "1";
+    const {
+      sort,
+      order,
+      team,
+      from,
+      to,
+      competitionId: competitionIdRaw,
+      includeHidden, // optional if you later support hidden comps
+    } = req.query;
 
-  // map of archived competition ids
-  const archivedIds = new Set(
-    competitions.filter(c => c.isArchived).map(c => c.id)
-  );
+    // ✅ never leak a free `competitionId` symbol
+    const competitionId = competitionIdRaw ? Number(competitionIdRaw) : null;
 
-  let results = includeArchived
-    ? allMatches
-    : allMatches.filter(m => !archivedIds.has(m.competitionId));
+    let results = [...all];
 
-  // (keep your existing sorting/filtering params logic here, if you have it)
-  res.json(results);
+    if (competitionId) {
+      results = results.filter((m) => m.competitionId === competitionId);
+    }
+
+    if (team) {
+      const t = String(team).toLowerCase();
+      results = results.filter(
+        (m) =>
+          m.teamA.toLowerCase().includes(t) ||
+          m.teamB.toLowerCase().includes(t) ||
+          (m.competitionName || "").toLowerCase().includes(t)
+      );
+    }
+
+    if (from) {
+      const fromDate = new Date(from);
+      results = results.filter((m) => new Date(m.kickoff) >= fromDate);
+    }
+    if (to) {
+      const toDate = new Date(to);
+      results = results.filter((m) => new Date(m.kickoff) <= toDate);
+    }
+
+    if (sort) {
+      const dir = order === "desc" ? -1 : 1;
+      results.sort((a, b) => {
+        if (sort === "date" || sort === "kickoff") {
+          return (new Date(a.kickoff) - new Date(b.kickoff)) * dir;
+        }
+        if (sort === "competition") {
+          return a.competitionName.localeCompare(b.competitionName) * dir;
+        }
+        if (sort === "team") {
+          return a.teamA.localeCompare(b.teamA) * dir;
+        }
+        return 0;
+      });
+    }
+
+    res.json(results);
+  } catch (e) {
+    console.error("❌ /api/matches error:", e);
+    res.status(500).json({ error: "Failed to load matches" });
+  }
 });
-  // Filter by competition
+
+// Filter by competition
   if (competitionId) {
     results = results.filter((m) => m.competitionId === parseInt(competitionId));
   }
