@@ -484,8 +484,27 @@ app.post("/api/competitions/:id/unarchive", authenticateToken, async (req, res) 
   res.json({ success: true, competition: competitions[idx] });
 });
 // Superadmin stuff
-app.post("/api/competitions/:id/hide", authenticateToken, requireAdmin, async (req, res) => { ... });
-app.post("/api/competitions/:id/restore", authenticateToken, requireAdmin, async (req, res) => { ... });
+// Soft-delete (hide) a competition (does not remove matches/predictions)
+app.post("/api/competitions/:id/hide", authenticateToken, requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const comps = await readJSON("competitions.json");
+  const idx = comps.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Competition not found" });
+  comps[idx] = { ...comps[idx], active: false };
+  await writeJSON("competitions.json", comps);
+  res.json({ success: true, competition: comps[idx] });
+});
+
+// Restore a hidden competition
+app.post("/api/competitions/:id/restore", authenticateToken, requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const comps = await readJSON("competitions.json");
+  const idx = comps.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Competition not found" });
+  comps[idx] = { ...comps[idx], active: true };
+  await writeJSON("competitions.json", comps);
+  res.json({ success: true, competition: comps[idx] });
+});
 
 // SuperAdmin-only destructive purge
 app.delete("/api/admin/competitions/:id/purge", authenticateToken, requireSuperAdmin, async (req, res) => { ... });
