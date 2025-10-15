@@ -630,7 +630,6 @@ app.get("/api/matches", async (req, res) => {
   }
 
   res.json(results);
-});
 
 // Add a match
 app.post("/api/matches", (req, res) => {
