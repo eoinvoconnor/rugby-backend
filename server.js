@@ -507,12 +507,167 @@ app.post("/api/competitions/:id/restore", authenticateToken, requireAdmin, async
 });
 
 // SuperAdmin-only destructive purge
-app.delete("/api/admin/competitions/:id/purge", authenticateToken, requireSuperAdmin, async (req, res) => { ... });
+// SuperAdmin-only destructive purge (hard delete competition + its matches + predictions)
+app.delete(
+  "/api/admin/competitions/:id/purge",
+  authenticateToken,
+  requireSuperAdmin,
+  async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
 
-// Admin utilities
-app.get("/api/admin/audit", authenticateToken, requireAdmin, async (req, res) => { ... });
-app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (req, res) => { ... });
+      const competitions = await readJSON("competitions.json");
+      const matches = await readJSON("matches.json");
+      const predictions = await readJSON("predictions.json");
 
+      const compIdx = competitions.findIndex((c) => c.id === id);
+      if (compIdx === -1) {
+        return res.status(404).json({ error: "Competition not found" });
+      }
+
+      const removedCompetition = competitions[compIdx];
+
+      // collect matchIds for this competition
+      const matchIdsToRemove = new Set(
+        matches.filter((m) => m.competitionId === id).map((m) => m.id)
+      );
+
+      const keptCompetitions = competitions.filter((c) => c.id !== id);
+      const keptMatches = matches.filter((m) => m.competitionId !== id);
+      const keptPredictions = predictions.filter(
+        (p) => !matchIdsToRemove.has(p.matchId)
+      );
+
+      // write files
+      await writeJSON("competitions.json", keptCompetitions);
+      await writeJSON("matches.json", keptMatches);
+      await writeJSON("predictions.json", keptPredictions);
+
+      res.json({
+        success: true,
+        message: `Purged "${removedCompetition.name}" and all related data.`,
+        removed: {
+          competition: removedCompetition,
+          matches: matchIdsToRemove.size,
+          predictions: predictions.length - keptPredictions.length,
+        },
+      });
+    } catch (err) {
+      console.error("❌ Purge error:", err);
+      res.status(500).json({ error: "Failed to purge competition" });
+    }
+  }
+);
+
+// Admin audit: surface useful integrity info
+app.get(
+  "/api/admin/audit",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const competitions = await readJSON("competitions.json");
+      const matches = await readJSON("matches.json");
+      const predictions = await readJSON("predictions.json");
+      const users = await readJSON("users.json");
+
+      const compById = new Map(competitions.map((c) => [c.id, c]));
+      const matchIds = new Set(matches.map((m) => m.id));
+
+      const hiddenCompetitions = competitions.filter((c) => c.active === false);
+      const orphanedMatches = matches.filter((m) => !compById.has(m.competitionId));
+      const orphanedPredictions = predictions.filter((p) => !matchIds.has(p.matchId));
+
+      // simple per-comp counts
+      const matchesByCompetition = competitions.map((c) => ({
+        competitionId: c.id,
+        name: c.name,
+        count: matches.filter((m) => m.competitionId === c.id).length,
+      }));
+
+      res.json({
+        counts: {
+          competitions: competitions.length,
+          matches: matches.length,
+          predictions: predictions.length,
+          users: users.length,
+        },
+        hiddenCompetitions: hiddenCompetitions.map((c) => ({
+          id: c.id,
+          name: c.name,
+        })),
+        orphaned: {
+          matches: orphanedMatches.map((m) => ({
+            id: m.id,
+            competitionId: m.competitionId,
+            competitionName: m.competitionName,
+            teamA: m.teamA,
+            teamB: m.teamB,
+            kickoff: m.kickoff,
+          })),
+          predictions: orphanedPredictions.map((p) => ({
+            userId: p.userId,
+            matchId: p.matchId,
+            predictedWinner: p.predictedWinner,
+            margin: p.margin,
+          })),
+        },
+        matchesByCompetition,
+      });
+    } catch (err) {
+      console.error("❌ Audit error:", err);
+      res.status(500).json({ error: "Failed to build audit" });
+    }
+  }
+);
+
+// Relink orphaned matches: if competitionId is invalid but competitionName matches a known comp, fix it
+app.post(
+  "/api/admin/relink-matches",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const competitions = await readJSON("competitions.json");
+      const matches = await readJSON("matches.json");
+
+      const compById = new Map(competitions.map((c) => [c.id, c]));
+      const compByName = new Map(
+        competitions.map((c) => [String(c.name).trim().toLowerCase(), c])
+      );
+
+      let updated = 0;
+
+      for (const m of matches) {
+        const hasValidCompId = compById.has(m.competitionId);
+        if (hasValidCompId) continue;
+
+        const best = compByName.get(String(m.competitionName).trim().toLowerCase());
+        if (best) {
+          m.competitionId = best.id;
+          if (best.color) m.competitionColor = best.color;
+          updated++;
+        }
+      }
+
+      if (updated > 0) {
+        await writeJSON("matches.json", matches);
+      }
+
+      res.json({
+        success: true,
+        relinked: updated,
+        message:
+          updated > 0
+            ? `Relinked ${updated} orphaned matches by competition name.`
+            : "No orphaned matches found to relink.",
+      });
+    } catch (err) {
+      console.error("❌ Relink error:", err);
+      res.status(500).json({ error: "Failed to relink matches" });
+    }
+  }
+);
 // Parse ICS into matches (robust "Team A vs Team B" handling)
 const parsed = ical.parseICS(response.data);
 const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
