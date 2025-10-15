@@ -184,6 +184,7 @@ async function refreshCompetitionById(id) {
         result: { winner: null, margin: null },
       };
     });
+    
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
   const updatedMatches = [...filtered, ...newMatches];
