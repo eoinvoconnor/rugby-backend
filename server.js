@@ -150,9 +150,6 @@ async function refreshCompetitionById(id) {
   if (!comp) throw new Error("Competition not found");
 
   const normalizedUrl = normalizeUrl(comp.url);
-  const axios = require("axios");
-  const ical = require("node-ical");
-
   const response = await axios.get(normalizedUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (rugby-app)",
@@ -189,7 +186,6 @@ async function refreshCompetitionById(id) {
 
   return { added: newMatches.length };
 }
-
 // ----- SUPERADMIN GUARD -----
 function requireSuperAdmin(req, res, next) {
   // you can also make this an env var if you want: process.env.SUPERADMIN_EMAIL
@@ -363,87 +359,35 @@ app.post("/api/competitions", authenticateToken, async (req, res) => {
     }
 
     const competitions = await readJSON("competitions.json");
+
     const newCompetition = {
       id: competitions.length ? Math.max(...competitions.map((c) => c.id)) + 1 : 1,
       name,
       url,
       color: color || "#1976d2",
       createdAt: new Date().toISOString(),
+      lastRefreshed: null,
+      hidden: false, // if you support soft-delete; harmless otherwise
     };
 
     competitions.push(newCompetition);
     await writeJSON("competitions.json", competitions);
 
-    // ✅ Safely refresh this one competition you just added
+    // Try auto-refresh the new comp so matches appear immediately
     try {
-      const refreshed = await refreshCompetitionById(newCompetition.id);
-      console.log(
-        `✅ Auto-refreshed "${newCompetition.name}" — added ${refreshed.added} matches`
-      );
+      const { added } = await refreshCompetitionById(newCompetition.id);
+      console.log(`✅ Auto-refreshed "${newCompetition.name}" — added ${added} matches`);
     } catch (e) {
       console.warn("⚠️ Auto-refresh after add failed:", e.message);
     }
-    
-    res.status(201).json(newCompetition);
-    } catch (err) {
+
+    return res.status(201).json(newCompetition);
+  } catch (err) {
     console.error("❌ Failed to add competition:", err);
-    res.status(500).json({ error: "Failed to add competition" });
+    return res.status(500).json({ error: "Failed to add competition" });
   }
 });
-// after: await writeJSON("competitions.json", competitions);
 
-// Immediately refresh this competition so matches appear
-try {
-  // reuse the same logic as your refresh route
-  const normalizedUrl = normalizeUrl(newCompetition.url);
-  const response = await axios.get(normalizedUrl, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (rugby-app)",
-      Accept: "text/calendar",
-    },
-  });
-
-  const parsed = ical.parseICS(response.data);
-  const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
-
-  const freshMatches = Object.values(parsed)
-    .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
-    .map((event) => {
-      const m = String(event.summary).match(vsRegex);
-      const teamA = m ? m[1].trim() : "TBD";
-      const teamB = m ? m[2].trim() : "TBD";
-      const kickoffISO = (event.start instanceof Date)
-        ? event.start.toISOString()
-        : new Date(event.start).toISOString();
-
-      return {
-        id: Date.now() + Math.floor(Math.random() * 1000000),
-        competitionId: newCompetition.id,
-        competitionName: newCompetition.name,
-        competitionColor: newCompetition.color || "#888",
-        teamA,
-        teamB,
-        kickoff: kickoffISO,
-        result: { winner: null, margin: null },
-      };
-    });
-
-  // Replace old matches for this comp (there shouldn't be any yet, but safe)
-  const matchesNow = await readJSON("matches.json");
-  const filtered = matchesNow.filter((m) => m.competitionId !== newCompetition.id);
-  await writeJSON("matches.json", [...filtered, ...freshMatches]);
-
-  // also bump lastRefreshed safely
-  const latestComps = await readJSON("competitions.json");
-  const updatedComps = latestComps.map((c) =>
-    c.id === newCompetition.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
-  );
-  await writeJSON("competitions.json", updatedComps);
-
-  console.log(`✅ Added ${freshMatches.length} matches for new comp ${newCompetition.name}`);
-} catch (e) {
-  console.error("⚠️ Auto-refresh after add failed:", e.message);
-}
 
 // Delete a competition
 app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
@@ -627,7 +571,7 @@ async function save(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-// ==================== MATCHES ====================
+// --- MATCHES ---
 app.get("/api/matches", async (req, res) => {
   try {
     const all = await readJSON("matches.json");
@@ -639,10 +583,9 @@ app.get("/api/matches", async (req, res) => {
       from,
       to,
       competitionId: competitionIdRaw,
-      includeHidden, // optional if you later support hidden comps
     } = req.query;
 
-    // ✅ never leak a free `competitionId` symbol
+    // always read competitionId from req.query inside the route
     const competitionId = competitionIdRaw ? Number(competitionIdRaw) : null;
 
     let results = [...all];
@@ -652,12 +595,12 @@ app.get("/api/matches", async (req, res) => {
     }
 
     if (team) {
-      const t = String(team).toLowerCase();
+      const q = String(team).toLowerCase();
       results = results.filter(
         (m) =>
-          m.teamA.toLowerCase().includes(t) ||
-          m.teamB.toLowerCase().includes(t) ||
-          (m.competitionName || "").toLowerCase().includes(t)
+          m.teamA.toLowerCase().includes(q) ||
+          m.teamB.toLowerCase().includes(q) ||
+          (m.competitionName || "").toLowerCase().includes(q)
       );
     }
 
@@ -686,55 +629,13 @@ app.get("/api/matches", async (req, res) => {
       });
     }
 
-    res.json(results);
+    return res.json(results);
   } catch (e) {
     console.error("❌ /api/matches error:", e);
-    res.status(500).json({ error: "Failed to load matches" });
+    return res.status(500).json({ error: "Failed to load matches" });
   }
 });
 
-// Filter by competition
-  if (competitionId) {
-    results = results.filter((m) => m.competitionId === parseInt(competitionId));
-  }
-
-  // Filter by team OR competition name (enhanced search)
-  if (team) {
-    const t = team.toLowerCase();
-    results = results.filter(
-      (m) =>
-        m.teamA.toLowerCase().includes(t) ||
-        m.teamB.toLowerCase().includes(t) ||
-        m.competitionName.toLowerCase().includes(t)
-    );
-  }
-
-  // Date filtering
-  if (from) {
-    const fromDate = new Date(from);
-    results = results.filter((m) => new Date(m.kickoff) >= fromDate);
-  }
-  if (to) {
-    const toDate = new Date(to);
-    results = results.filter((m) => new Date(m.kickoff) <= toDate);
-  }
-
-  // Sorting
-  if (sort) {
-    const dir = order === "desc" ? -1 : 1;
-    results.sort((a, b) => {
-      if (sort === "date") {
-        return (new Date(a.kickoff) - new Date(b.kickoff)) * dir;
-      } else if (sort === "competition") {
-        return a.competitionName.localeCompare(b.competitionName) * dir;
-      } else if (sort === "team") {
-        return a.teamA.localeCompare(b.teamA) * dir;
-      }
-      return 0;
-    });
-  }
-
-  res.json(results);
 
 // Add a match
 app.post("/api/matches", (req, res) => {
