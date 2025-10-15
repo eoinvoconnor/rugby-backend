@@ -187,9 +187,17 @@ async function refreshCompetitionById(id) {
   return { added: newMatches.length };
 }
 // ----- SUPERADMIN GUARD -----
+// ---- Admin guards ----
+const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || "eoinvoconnor@gmail.com";
+
+function requireAdmin(req, res, next) {
+  if (!req.user || !req.user.isAdmin) {
+    return res.status(403).json({ error: "Admin only" });
+  }
+  next();
+}
+
 function requireSuperAdmin(req, res, next) {
-  // you can also make this an env var if you want: process.env.SUPERADMIN_EMAIL
-  const SUPERADMIN_EMAIL = "eoinvoconnor@gmail.com";
   if (!req.user || req.user.email !== SUPERADMIN_EMAIL) {
     return res.status(403).json({ error: "SuperAdmin only" });
   }
@@ -264,35 +272,64 @@ app.post("/api/users", authenticateToken, async (req, res) => {
   }
 });
 
+// Login (create-if-missing) + issue JWT with admin flags
 app.post("/api/users/login", async (req, res) => {
-  const { email, firstname, surname } = req.body;
-  const users = await readJSON("users.json");
-  let user = users.find((u) => u.email === email);
+  try {
+    const { email, firstname, surname } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
 
-  if (!user) {
-    user = {
-      id: users.length + 1,
-      email,
-      firstname,
-      surname,
-      isAdmin: false,
-    };
-    users.push(user);
-    await writeJSON("users.json", users);
+    const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || "eoinvoconnor@gmail.com";
+
+    const users = await readJSON("users.json");
+    let user = users.find((u) => u.email === email);
+
+    // auto-create if not found (same as before)
+    if (!user) {
+      user = {
+        id: users.length ? Math.max(...users.map(u => u.id)) + 1 : 1,
+        email,
+        firstname: firstname || "",
+        surname: surname || "",
+        isAdmin: false,
+      };
+      users.push(user);
+      await writeJSON("users.json", users);
+    }
+
+    // compute flags
+    const isSuperAdmin = user.email === SUPERADMIN_EMAIL;
+
+    // sign token (same expiry)
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        isAdmin: !!user.isAdmin,
+        isSuperAdmin,                 // 👈 new
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // include flags in response
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstname: user.firstname,
+        surname: user.surname,
+        isAdmin: !!user.isAdmin,
+        isSuperAdmin,               // 👈 new
+      },
+    });
+  } catch (err) {
+    console.error("❌ Login error:", err);
+    res.status(500).json({ error: "Login failed" });
   }
-
-  const token = jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      isAdmin: user.isAdmin,
-    },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-
-  res.json({ token, user });
 });
+
+
 app.delete("/api/users/:id", authenticateToken, async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
@@ -446,6 +483,16 @@ app.post("/api/competitions/:id/unarchive", authenticateToken, async (req, res) 
   await writeJSON("competitions.json", competitions);
   res.json({ success: true, competition: competitions[idx] });
 });
+// Superadmin stuff
+app.post("/api/competitions/:id/hide", authenticateToken, requireAdmin, async (req, res) => { ... });
+app.post("/api/competitions/:id/restore", authenticateToken, requireAdmin, async (req, res) => { ... });
+
+// SuperAdmin-only destructive purge
+app.delete("/api/admin/competitions/:id/purge", authenticateToken, requireSuperAdmin, async (req, res) => { ... });
+
+// Admin utilities
+app.get("/api/admin/audit", authenticateToken, requireAdmin, async (req, res) => { ... });
+app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (req, res) => { ... });
 
 // Parse ICS into matches (robust "Team A vs Team B" handling)
 const parsed = ical.parseICS(response.data);
