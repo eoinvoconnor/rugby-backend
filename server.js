@@ -164,6 +164,7 @@ async function refreshCompetitionById(id) {
     .filter((e) => e.type === "VEVENT")
     .map((event) => {
       // --- Clean up the summary text ---
+      console.log(`🧾 Raw summary for ${comp.name}:`, JSON.stringify(event.summary));
       let rawSummary = event.summary || "";
       rawSummary = rawSummary
         .replace(/🏉/g, "")          // remove rugby ball emoji
@@ -184,7 +185,7 @@ async function refreshCompetitionById(id) {
         result: { winner: null, margin: null },
       };
     });
-    
+
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
   const updatedMatches = [...filtered, ...newMatches];
