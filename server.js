@@ -10,13 +10,15 @@ import jwt from "jsonwebtoken";
 import cron from "node-cron";
 import axios from "axios";
 import ical from "node-ical";
-import * as resultsUpdater from "./utils/resultsUpdater.cjs";
 import { fileURLToPath } from "url";
 
-// Support either module.exports = fn  OR  module.exports = { updateResultsFromSources }
+// Import CommonJS utility as ESM-compatible
+import resultsUpdaterModule from "./utils/resultsUpdater.cjs";
+
+// Support either `module.exports = fn` OR `module.exports = { updateResultsFromSources }`
 const updateResultsFromSources =
   resultsUpdaterModule.updateResultsFromSources || resultsUpdaterModule;
-  
+
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
