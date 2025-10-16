@@ -82,7 +82,59 @@ async function fetchIcsText(url) {
   });
   return response.data;
 }
+// --- Helpers for cleaning feed titles (eCal / ICS) ---
+function cleanTeamText(text, compName = "") {
+  if (!text) return "";
 
+  // Normalize spaces
+  let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
+
+  // Remove common emojis/icons that appear in summaries
+  t = t.replace(/[🏉🏆]/g, "");
+
+  // Remove an explicit “competition prefix”, e.g. "URC:" or "PREM..." at the start
+  // Use compName if present, otherwise a generic set (URC, PREM, Premiership, etc)
+  const prefixes = [
+    compName,              // exact competition name if present
+    "URC",
+    "PREM",
+    "Premiership",
+    "PREM Rugby Cup",
+    "Gallagher Premiership"
+  ]
+    .filter(Boolean)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape regex chars
+    .join("|");
+
+  if (prefixes) {
+    t = t.replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "");
+  }
+
+  // Remove suffixes like: "| 🏆 PREM Rugby Cup" or " - 🏆 Something"
+  t = t.replace(/\s*\|\s*.*$/i, "");         // drop everything after " | "
+  t = t.replace(/\s*-\s*🏆.*$/i, "");         // drop " - 🏆 …"
+  t = t.replace(/\s*-\s*(?:PREM.*|URC.*)$/i, ""); // drop " - PREM..." etc
+
+  // Squash duplicate spaces and trim
+  t = t.replace(/\s{2,}/g, " ").trim();
+
+  return t;
+}
+
+// Split a summary into [teamA, teamB] using common separators
+function splitTeamsFromSummary(summary, compName = "") {
+  const s = String(summary || "");
+  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i); // "vs", "vs.", or "v"
+  if (!rawA || !rawB) {
+    // Fallback: no split; return as-is
+    const cleaned = cleanTeamText(s, compName);
+    return [cleaned, "TBD"];
+  }
+  return [
+    cleanTeamText(rawA, compName),
+    cleanTeamText(rawB, compName),
+  ];
+}
 /**
  * Very light parser that expects event.summary like "Team A vs Team B" (or "v")
  * and a valid DTSTART for kickoff.
@@ -457,13 +509,13 @@ app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Failed to delete competition" });
   }
 });
-// Refresh a single competition's feed and update its matches
+// ==================== REFRESH A SINGLE COMPETITION ====================
 app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) => {
-  const competitions = await readJSON("competitions.json");
-  const comp = competitions.find((c) => c.id === parseInt(req.params.id));
-  if (!comp) return res.status(404).json({ error: "Competition not found" });
-
   try {
+    const competitions = await readJSON("competitions.json");
+    const comp = competitions.find((c) => c.id === parseInt(req.params.id));
+    if (!comp) return res.status(404).json({ error: "Competition not found" });
+
     const normalizedUrl = normalizeUrl(comp.url);
     console.log(`🔄 Refreshing competition: ${comp.name}`);
 
@@ -475,6 +527,47 @@ app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) =>
       responseType: "text",
     });
 
+    const parsed = ical.parseICS(response.data);
+
+    // Build clean matches (team names stripped of emojis/prefixes/suffixes)
+    const newMatches = Object.values(parsed)
+      .filter((e) => e.type === "VEVENT")
+      .map((event) => {
+        const [teamA, teamB] = splitTeamsFromSummary(event.summary, comp.name);
+        return {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          competitionId: comp.id,
+          competitionName: comp.name,
+          competitionColor: comp.color,
+          teamA,
+          teamB,
+          kickoff: event.start,
+          result: { winner: null, margin: null },
+        };
+      });
+
+// Replace old matches for this competition (avoid shadowing global `matches`)
+    const existingMatches = await readJSON("matches.json");
+    const filtered = existingMatches.filter((m) => m.competitionId !== comp.id);
+    const updatedMatches = [...filtered, ...newMatches];
+    await writeJSON("matches.json", updatedMatches);
+
+    // Update lastRefreshed timestamp for the competition
+    const updatedComps = competitions.map((c) =>
+      c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+    );
+    await writeJSON("competitions.json", updatedComps);
+
+    console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
+    res.json({
+      message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
+      added: newMatches.length,
+    });
+  } catch (err) {
+    console.error(`❌ Failed to refresh competition:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 // Soft delete (archive)
 app.post("/api/competitions/:id/archive", authenticateToken, async (req, res) => {
   const id = parseInt(req.params.id);
@@ -735,7 +828,7 @@ const newMatches = Object.values(parsed)
     console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
     res.status(500).json({ error: err.message });
   }
-});
+}); // <-- close the POST /refresh route
 
 // ***** DANGER: SUPERADMIN HARD DELETE W/ CASCADE *****
 app.delete(
@@ -746,27 +839,27 @@ app.delete(
     const id = parseInt(req.params.id);
 
     const competitions = await readJSON("competitions.json");
-    const matches = await readJSON("matches.json");
+    const allMatches = await readJSON("matches.json");            // <- rename
     const predictions = await readJSON("predictions.json");
-
+    
     const comp = competitions.find(c => c.id === id);
     if (!comp) return res.status(404).json({ error: "Competition not found" });
-
+    
     // Remove competition
     const newComps = competitions.filter(c => c.id !== id);
-
+    
     // Remove matches for this comp
-    const removedMatches = matches.filter(m => m.competitionId === id);
+    const removedMatches = allMatches.filter(m => m.competitionId === id);
     const removedMatchIds = new Set(removedMatches.map(m => m.id));
-    const newMatches = matches.filter(m => !removedMatchIds.has(m.id));
-
+    const keptMatches = allMatches.filter(m => !removedMatchIds.has(m.id)); // <- rename
+    
     // Remove predictions for those matches
     const newPredictions = predictions.filter(p => !removedMatchIds.has(p.matchId));
-
+    
     await writeJSON("competitions.json", newComps);
-    await writeJSON("matches.json", newMatches);
+    await writeJSON("matches.json", keptMatches);                 // <- renamed
     await writeJSON("predictions.json", newPredictions);
-
+    
     res.json({
       success: true,
       deleted: {
@@ -780,8 +873,6 @@ app.delete(
 
 // ==================== DATA CACHES ====================
 // Load data files once when the server starts
-let matches = [];
-let competitions = [];
 
 const MATCHES_FILE = path.join(DATA_DIR, "matches.json");
 const COMPETITIONS_FILE = path.join(DATA_DIR, "competitions.json");
