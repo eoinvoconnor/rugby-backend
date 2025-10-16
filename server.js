@@ -13,12 +13,10 @@ import ical from "node-ical";
 import * as resultsUpdater from "./utils/resultsUpdater.js";
 import { fileURLToPath } from "url";
 
-// Support both: "export default ..."  OR  "export const updateResultsFromSources = ..."
+// Support both "export default ..." and "export const updateResultsFromSources = ..."
 const updateResultsFromSources =
-  typeof resultsUpdater === "function"
-    ? resultsUpdater
-    : resultsUpdater.updateResultsFromSources || resultsUpdater.default;
-
+  resultsUpdater.updateResultsFromSources || resultsUpdater.default;
+  
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
