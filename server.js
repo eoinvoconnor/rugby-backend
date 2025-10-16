@@ -10,8 +10,14 @@ import jwt from "jsonwebtoken";
 import cron from "node-cron";
 import axios from "axios";
 import ical from "node-ical";
-import { updateResultsFromSources } from "./utils/resultsUpdater.js";
+import * as resultsUpdater from "./utils/resultsUpdater.js";
 import { fileURLToPath } from "url";
+
+// Support both: "export default ..."  OR  "export const updateResultsFromSources = ..."
+const updateResultsFromSources =
+  typeof resultsUpdater === "function"
+    ? resultsUpdater
+    : resultsUpdater.updateResultsFromSources || resultsUpdater.default;
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
