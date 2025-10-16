@@ -29,7 +29,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
 
-// Prefer persistent Render disk at /var/data, fallback to local /data when not available
+// Prefer persistent Render disk at /var/data, fallback to local ./data
 const DATA_DIR = process.env.DATA_DIR || "/var/data";
 
 // Ensure the directory exists (important if running locally)
@@ -39,6 +39,7 @@ if (!fsSync.existsSync(DATA_DIR)) {
 }
 
 console.log(`💾 Using data directory: ${DATA_DIR}`);
+
 // ==================== MIDDLEWARE ====================
 app.use(express.json());
 
