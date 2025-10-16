@@ -861,11 +861,11 @@ const newMatches = Object.values(parsed)
       message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
       added: newMatches.length,
     });
-  } catch (err) {
-    console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
-    res.status(500).json({ error: err.message });
-  }
-}); // <-- close the POST /refresh route
+//  } catch (err) {
+//    console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
+//    res.status(500).json({ error: err.message });
+//  }
+//}); // <-- close the POST /refresh route
 
 // ***** DANGER: SUPERADMIN HARD DELETE W/ CASCADE *****
 app.delete(
