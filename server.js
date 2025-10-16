@@ -15,9 +15,11 @@ import { fileURLToPath } from "url";
 // Import CommonJS utility as ESM-compatible
 import resultsUpdaterModule from "./utils/resultsUpdater.cjs";
 
+
+
 // Support either `module.exports = fn` OR `module.exports = { updateResultsFromSources }`
-const updateResultsFromSources =
-  resultsUpdaterModule.updateResultsFromSources || resultsUpdaterModule;
+const mod = await import("./utils/resultsUpdater.cjs");
+const updateResultsFromSources = mod.default || mod.updateResultsFromSources;
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
