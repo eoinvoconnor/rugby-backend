@@ -28,8 +28,17 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
-const DATA_DIR = path.join(__dirname, "data");
 
+// Prefer persistent Render disk at /var/data, fallback to local /data when not available
+const DATA_DIR = process.env.DATA_DIR || "/var/data";
+
+// Ensure the directory exists (important if running locally)
+import fsSync from "fs";
+if (!fsSync.existsSync(DATA_DIR)) {
+  fsSync.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+console.log(`💾 Using data directory: ${DATA_DIR}`);
 // ==================== MIDDLEWARE ====================
 app.use(express.json());
 
@@ -65,15 +74,15 @@ app.options("*", (req, res) => {
 });
 
 // ==================== HELPER FUNCTIONS ====================
-async function readJSON(filename) {
-  const filePath = path.join(DATA_DIR, filename);
+async function readJSON(file) {
+  const filePath = path.join(DATA_DIR, file);
   const data = await fs.readFile(filePath, "utf8");
   return JSON.parse(data || "[]");
 }
 
-async function writeJSON(filename, data) {
-  const filePath = path.join(DATA_DIR, filename);
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+async function writeJSON(file, data) {
+  const filePath = path.join(DATA_DIR, file);
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
 }
 // --- ICS helpers (place near other helpers) ---
 function normalizeUrl(url) {
