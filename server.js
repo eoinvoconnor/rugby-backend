@@ -325,6 +325,31 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
+
+// Run the results scraper on demand (Admin only)
+// Optional query: ?daysBack=2&daysForward=3
+app.post("/api/admin/update-results", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const mod = await import("./utils/resultsUpdater.cjs");
+    const updateResultsFromSources = mod.default || mod.updateResultsFromSources;
+
+    // support optional window override
+    const daysBack = Number.isFinite(+req.query.daysBack) ? +req.query.daysBack : 1;
+    const daysForward = Number.isFinite(+req.query.daysForward) ? +req.query.daysForward : 1;
+
+    // call in "standalone" mode so it reads/writes /var/data files itself
+    const updated = await updateResultsFromSources(undefined, undefined, undefined, undefined, {
+      daysBack,
+      daysForward,
+    });
+
+    res.json({ success: true, updated, daysBack, daysForward });
+  } catch (err) {
+    console.error("❌ Manual results update failed:", err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
 // ==================== USERS ====================
 app.get("/api/users", authenticateToken, async (req, res) => {
   const users = await readJSON("users.json");
