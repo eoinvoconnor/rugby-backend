@@ -83,9 +83,9 @@ function normalizeUrl(url) {
 function cleanTeamName(s) {
   if (!s) return "TBD";
   return String(s)
-    .replace(/^🏉\s*/i, "")           // drop leading rugby ball emoji
-    .replace(/^URC:\s*/i, "")         // drop "URC: " prefix
-    .replace(/\s*\|\s*🏆.*$/i, "")    // drop " | 🏆 PREM Rugby Cup" tails
+    .replace(/^🏉\s*/u, "")           // 🟢 Unicode-safe
+    .replace(/^URC:\s*/i, "")
+    .replace(/\s*\|\s*🏆.*$/i, "")
     .trim();
 }
 
