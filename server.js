@@ -23,8 +23,6 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
 const DATA_DIR = path.join(__dirname, "data");
-const axios = require("axios");
-const ical  = require("node-ical");
 
 // ==================== MIDDLEWARE ====================
 app.use(express.json());
@@ -74,6 +72,15 @@ async function writeJSON(filename, data) {
 // --- ICS helpers (place near other helpers) ---
 function normalizeUrl(url) {
   return url.startsWith("webcal://") ? url.replace("webcal://", "https://") : url;
+}
+
+function cleanTeamName(s) {
+  if (!s) return "TBD";
+  return String(s)
+    .replace(/^🏉\s*/i, "")           // drop leading rugby ball emoji
+    .replace(/^URC:\s*/i, "")         // drop "URC: " prefix
+    .replace(/\s*\|\s*🏆.*$/i, "")    // drop " | 🏆 PREM Rugby Cup" tails
+    .trim();
 }
 
 async function fetchIcsText(url) {
@@ -512,98 +519,87 @@ app.delete("/api/competitions/:id", authenticateToken, async (req, res) => {
   }
 });
 // Refresh a single competition's feed and update its matches
-app.post("/api/competitions/:id/refresh", authenticateToken, async (req, res) => {
-  try {
-    const competitions = await readJSON("competitions.json");
-    const compId = parseInt(req.params.id, 10);
-    const comp = competitions.find((c) => c.id === compId);
-    if (!comp) return res.status(404).json({ error: "Competition not found" });
+app.post(
+  "/api/competitions/:id/refresh",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      // Load competition
+      const competitions = await readJSON("competitions.json");
+      const compId = Number(req.params.id);
+      const comp = competitions.find((c) => c.id === compId);
+      if (!comp) return res.status(404).json({ error: "Competition not found" });
 
-    const normalizedUrl = normalizeUrl(comp.url);
-    console.log(`🔄 Refreshing competition: ${comp.name}`);
+      // Fetch ICS
+      const normalizedUrl = normalizeUrl(comp.url);
+      console.log(`🔄 Refreshing competition: ${comp.name}`);
+      const { data: icsText } = await axios.get(normalizedUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (rugby-app)",
+          Accept: "text/calendar",
+        },
+        responseType: "text",
+      });
 
-    // axios + node-ical must be required once near the top of the file:
-    //   const axios = require("axios");
-    //   const ical  = require("node-ical");
-    const response = await axios.get(normalizedUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (rugby-app)",
-        Accept: "text/calendar",
-      },
-      responseType: "text",
-    });
+      // Parse ICS → matches
+      const parsed = ical.parseICS(icsText);
+      const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
 
-    const parsed = ical.parseICS(response.data);
+      const parsedMatches = Object.values(parsed)
+        .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
+        .map((evt) => {
+          const summary = String(evt.summary);
+          const m = summary.match(vsRegex);
+          let teamA = "TBD";
+          let teamB = "TBD";
+          if (m) {
+            teamA = cleanTeamName(m[1]);
+            teamB = cleanTeamName(m[2]);
+          }
 
-    // Clean nuisance prefixes/suffixes
-    const cleanTeam = (s) =>
-      String(s || "")
-        .replace(/^🏉\s*/u, "")           // leading rugby ball
-        .replace(/^URC:\s*/i, "")         // "URC: " prefix
-        .replace(/\s*\|\s*🏆.*$/u, "")    // trailing " | 🏆 …"
-        .trim();
+          const kickoffISO =
+            evt.start instanceof Date
+              ? evt.start.toISOString()
+              : new Date(evt.start).toISOString();
 
-    // Split "A vs B" / "A v B" / "A vs. B"
-    const vsRegex = /\s+v(?:s\.?)?\s+/i;
+          return {
+            id: Date.now() + Math.floor(Math.random() * 1_000_000),
+            competitionId: comp.id,
+            competitionName: comp.name,
+            competitionColor: comp.color || "#888",
+            teamA,
+            teamB,
+            kickoff: kickoffISO,
+            result: { winner: null, margin: null },
+          };
+        })
+        .filter((m) => m.kickoff); // guard
 
-    const newMatches = Object.values(parsed)
-      .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
-      .map((event) => {
-        const raw = String(event.summary);
-        const parts = raw.split(vsRegex);
+      // Replace old matches for this competition
+      const allMatches = await readJSON("matches.json"); // <- DO NOT call this variable "matches"
+      const kept = allMatches.filter((m) => m.competitionId !== comp.id);
+      const updatedMatches = [...kept, ...parsedMatches];
+      await writeJSON("matches.json", updatedMatches);
 
-        let teamA = "TBD";
-        let teamB = "TBD";
-        if (parts.length === 2) {
-          teamA = cleanTeam(parts[0]);
-          teamB = cleanTeam(parts[1]);
-        } else {
-          // fallback: single side, still clean it
-          teamA = cleanTeam(raw);
-        }
+      // Bump lastRefreshed on competitions
+      const latestComps = await readJSON("competitions.json");
+      const bumped = latestComps.map((c) =>
+        c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+      );
+      await writeJSON("competitions.json", bumped);
 
-        const kickoffISO =
-          event.start instanceof Date
-            ? event.start.toISOString()
-            : new Date(event.start).toISOString();
-
-        return {
-          id: Date.now() + Math.floor(Math.random() * 1_000_000),
-          competitionId: comp.id,
-          competitionName: comp.name,
-          competitionColor: comp.color || "#888",
-          teamA,
-          teamB,
-          kickoff: kickoffISO,
-          result: { winner: null, margin: null },
-        };
-      })
-      .filter((m) => m.kickoff);
-
-    // Replace existing matches for this competition
-    const allMatches = await readJSON("matches.json");
-    const kept = allMatches.filter((m) => m.competitionId !== comp.id);
-    const updatedMatches = [...kept, ...newMatches];
-    await writeJSON("matches.json", updatedMatches);
-
-    // Update lastRefreshed (re-read first to avoid races)
-    const latestComps = await readJSON("competitions.json");
-    const updatedComps = latestComps.map((c) =>
-      c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
-    );
-    await writeJSON("competitions.json", updatedComps);
-
-    console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
-    res.json({
-      message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
-      added: newMatches.length,
-    });
-  } catch (err) {
-    console.error("❌ Failed to refresh competition:", err);
-    res.status(500).json({ error: err.message || "Refresh failed" });
+      console.log(`✅ Updated ${parsedMatches.length} matches for ${comp.name}`);
+      return res.json({
+        message: `Updated ${parsedMatches.length} matches for ${comp.name}`,
+        added: parsedMatches.length,
+      });
+    } catch (err) {
+      console.error("❌ Refresh failed:", err);
+      return res.status(500).json({ error: err?.message || "Refresh failed" });
+    }
   }
-});
-
+);
 
 // Soft delete (archive)
 app.post("/api/competitions/:id/archive", authenticateToken, async (req, res) => {
@@ -811,61 +807,7 @@ app.post(
     }
   }
 );
-// Parse ICS into matches (robust "Team A vs Team B" handling)
-const parsed = ical.parseICS(response.data);
-const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
 
-const newMatches = Object.values(parsed)
-  .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
-  .map((event) => {
-    let teamA = "TBD";
-    let teamB = "TBD";
-    const m = String(event.summary).match(vsRegex);
-    if (m) {
-      teamA = m[1].trim();
-      teamB = m[2].trim();
-    }
-
-    const kickoffISO = (event.start instanceof Date)
-      ? event.start.toISOString()
-      : new Date(event.start).toISOString();
-
-    return {
-      id: Date.now() + Math.floor(Math.random() * 1000000),
-      competitionId: comp.id,
-      competitionName: comp.name,
-      competitionColor: comp.color || "#888",
-      teamA,
-      teamB,
-      kickoff: kickoffISO,
-      result: { winner: null, margin: null },
-    };
-  })
-        .filter((m) => m.kickoff); // remove invalid entries
-
-    // Replace old matches for this competition
-    const matches = await readJSON("matches.json");
-    const filtered = matches.filter((m) => m.competitionId !== comp.id);
-    const updatedMatches = [...filtered, ...newMatches];
-    await writeJSON("matches.json", updatedMatches);
-
-// ✅ Update lastRefreshed safely: re-read latest competitions file first
-    const latestComps = await readJSON("competitions.json");
-    const updatedComps = latestComps.map((c) =>
-      c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
-    );
-    await writeJSON("competitions.json", updatedComps);
-
-    console.log(`✅ Updated ${newMatches.length} matches for ${comp.name}`);
-    res.json({
-      message: `✅ Updated ${newMatches.length} matches for ${comp.name}`,
-      added: newMatches.length,
-    });
-//  } catch (err) {
-//    console.error(`❌ Failed to refresh ${comp.name}:`, err.message);
-//    res.status(500).json({ error: err.message });
-//  }
-//}); // <-- close the POST /refresh route
 
 // ***** DANGER: SUPERADMIN HARD DELETE W/ CASCADE *****
 app.delete(
@@ -910,7 +852,8 @@ app.delete(
 
 // ==================== DATA CACHES ====================
 // Load data files once when the server starts
-
+let matches = [];
+let competitions = [];
 const MATCHES_FILE = path.join(DATA_DIR, "matches.json");
 const COMPETITIONS_FILE = path.join(DATA_DIR, "competitions.json");
 
