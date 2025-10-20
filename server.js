@@ -893,31 +893,27 @@ app.delete(
   }
 );
 
-// ==================== DATA CACHES ====================
-// Load data files once when the server starts
-let matches = [];
-let competitions = [];
-const MATCHES_FILE = path.join(DATA_DIR, "matches.json");
-const COMPETITIONS_FILE = path.join(DATA_DIR, "competitions.json");
-
-// Helper to load both JSON files into memory
-async function loadData() {
+// ==================== DATA CACHES (read-only init log) ====================
+// We no longer keep global mutable arrays; instead, routes read/write files directly.
+// This function just logs counts at startup so you still see visibility in logs.
+async function logDataCounts() {
   try {
-    matches = await readJSON("matches.json");
-    competitions = await readJSON("competitions.json");
-    console.log(`✅ Loaded ${matches.length} matches and ${competitions.length} competitions`);
+    const [matches, competitions, users, predictions] = await Promise.all([
+      readJSON("matches.json").catch(() => []),
+      readJSON("competitions.json").catch(() => []),
+      readJSON("users.json").catch(() => []),
+      readJSON("predictions.json").catch(() => []),
+    ]);
+    console.log(
+      `✅ Loaded ${matches.length} matches, ` +
+      `${competitions.length} competitions, ` +
+      `${users.length} users, ${predictions.length} predictions`
+    );
   } catch (err) {
-    console.error("❌ Failed to load initial data:", err);
+    console.error("❌ Failed to load initial data counts:", err);
   }
 }
-
-// Call it once at startup
-loadData();
-
-// Helper to save matches back to disk
-async function save(filePath, data) {
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-}
+logDataCounts();
 
 // --- MATCHES ---
 app.get("/api/matches", async (req, res) => {
@@ -986,52 +982,73 @@ app.get("/api/matches", async (req, res) => {
 
 
 // Add a match
-app.post("/api/matches", (req, res) => {
-  const { competitionId, teamA, teamB, kickoff } = req.body;
-  if (!competitionId || !teamA || !teamB || !kickoff) {
-    return res.status(400).json({ error: "Missing fields" });
+app.post("/api/matches", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { competitionId, teamA, teamB, kickoff } = req.body;
+    if (!competitionId || !teamA || !teamB || !kickoff) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const [competitions, matches] = await Promise.all([
+      readJSON("competitions.json"),
+      readJSON("matches.json"),
+    ]);
+
+    const comp = competitions.find((c) => c.id === Number(competitionId));
+    const newMatch = {
+      id: matches.length ? Math.max(...matches.map((m) => m.id)) + 1 : 1,
+      competitionId: Number(competitionId),
+      competitionName: comp ? comp.name : "Unknown",
+      competitionColor: comp?.color || "#888888",
+      teamA,
+      teamB,
+      kickoff,
+      result: { winner: null, margin: null },
+    };
+
+    matches.push(newMatch);
+    await writeJSON("matches.json", matches);
+    res.status(201).json(newMatch);
+  } catch (err) {
+    console.error("❌ Add match failed:", err);
+    res.status(500).json({ error: "Failed to add match" });
   }
-
-  const comp = competitions.find((c) => c.id === competitionId);
-
-  const match = {
-    id: matches.length ? Math.max(...matches.map((m) => m.id)) + 1 : 1,
-    competitionId,
-    competitionName: comp ? comp.name : "Unknown",
-    competitionColor: comp ? comp.color : "#888888",
-    teamA,
-    teamB,
-    kickoff,
-    result: { winner: null, margin: null },
-  };
-
-  matches.push(match);
-  save(MATCHES_FILE, matches);
-  res.json(match);
 });
 
 // Edit a match
-app.put("/api/matches/:id", (req, res) => {
-  const matchId = parseInt(req.params.id);
-  const match = matches.find((m) => m.id === matchId);
-  if (!match) return res.status(404).json({ error: "Match not found" });
+app.put("/api/matches/:id", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const matchId = Number(req.params.id);
+    const matches = await readJSON("matches.json");
+    const idx = matches.findIndex((m) => m.id === matchId);
+    if (idx === -1) return res.status(404).json({ error: "Match not found" });
 
-  Object.assign(match, req.body);
-  save(MATCHES_FILE, matches);
-  res.json(match);
+    const updated = { ...matches[idx], ...req.body, id: matchId };
+    matches[idx] = updated;
+    await writeJSON("matches.json", matches);
+    res.json(updated);
+  } catch (err) {
+    console.error("❌ Update match failed:", err);
+    res.status(500).json({ error: "Failed to update match" });
+  }
 });
 
 // Delete a match
-app.delete("/api/matches/:id", (req, res) => {
-  const matchId = parseInt(req.params.id);
-  const index = matches.findIndex((m) => m.id === matchId);
-  if (index === -1) return res.status(404).json({ error: "Match not found" });
+app.delete("/api/matches/:id", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const matchId = Number(req.params.id);
+    const matches = await readJSON("matches.json");
+    const idx = matches.findIndex((m) => m.id === matchId);
+    if (idx === -1) return res.status(404).json({ error: "Match not found" });
 
-  matches.splice(index, 1);
-  save(MATCHES_FILE, matches);
-  res.json({ success: true });
+    matches.splice(idx, 1);
+    await writeJSON("matches.json", matches);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Delete match failed:", err);
+    res.status(500).json({ error: "Failed to delete match" });
+  }
 });
-
 // ==================== PREDICTIONS ====================
 // GET /api/predictions
 // - normal users: their own predictions
