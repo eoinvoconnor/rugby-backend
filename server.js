@@ -1033,59 +1033,77 @@ app.delete("/api/matches/:id", (req, res) => {
 });
 
 // ==================== PREDICTIONS ====================
+// GET /api/predictions
+// - normal users: their own predictions
+// - admins: pass ?all=1 to see everyone
+// - pass ?expand=1 to embed match and user objects
 app.get("/api/predictions", authenticateToken, async (req, res) => {
-  const predictions = await readJSON("predictions.json");
+  try {
+    const { all, expand } = req.query;
 
-  // Admin can fetch everyone’s predictions
-  if (req.query.all === "1") {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: "Admin only" });
+    let predictions = await readJSON("predictions.json");
+
+    // If not admin or ?all not requested, restrict to current user
+    const isAdmin = !!req.user?.isAdmin;
+    if (!isAdmin || all !== "1") {
+      predictions = predictions.filter((p) => p.userId === req.user.id);
     }
 
-    // optional expansion to include match & user objects
-    if (req.query.expand === "1") {
+    // Optionally expand with match + user details
+    if (expand === "1") {
       const [matches, users] = await Promise.all([
         readJSON("matches.json"),
         readJSON("users.json"),
       ]);
-      const matchById = Object.fromEntries(matches.map((m) => [m.id, m]));
-      const userById = Object.fromEntries(users.map((u) => [u.id, u]));
+      const matchById = new Map(matches.map((m) => [m.id, m]));
+      const userById  = new Map(users.map((u) => [u.id, u]));
 
-      return res.json(
-        predictions.map((p) => ({
-          ...p,
-          match: matchById[p.matchId] || null,
-          user: userById[p.userId] || null,
-        }))
-      );
+      predictions = predictions.map((p) => ({
+        ...p,
+        match: matchById.get(p.matchId) || null,
+        user:  userById.get(p.userId)  || null,
+      }));
     }
 
-    // plain list of all predictions (no join)
-    return res.json(predictions);
+    res.json(predictions);
+  } catch (err) {
+    console.error("❌ /api/predictions error:", err);
+    res.status(500).json({ error: "Failed to load predictions" });
   }
-
-  // regular users: only their own predictions
-  res.json(predictions.filter((p) => p.userId === req.user.id));
 });
 
-app.post("/api/predictions", authenticateToken, async (req, res) => {
-  let predictions = await readJSON("predictions.json");
-  const newPrediction = { ...req.body, userId: req.user.id };
 
-  // Replace any existing prediction for same match + user
-  predictions = predictions.filter(
-    (p) => !(p.userId === req.user.id && p.matchId === newPrediction.matchId)
-  );
+// POST /api/admin/relink-matches  (admin only)
+app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const predictions = await readJSON("predictions.json");
+    const matches     = await readJSON("matches.json");
 
-  predictions.push(newPrediction);
-  await writeJSON("predictions.json", predictions);
-  res.json({ success: true });
-});
+    // Helper for fuzzy compare
+    const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-// ==================== RESULTS UPDATE CRON ====================
-cron.schedule("0 */6 * * *", async () => {
-  console.log("🕒 Scheduled task: updating results...");
-  await updateResultsFromSources();
+    let linked = 0;
+    const mKey = m => `${norm(m.teamA)}|${norm(m.teamB)}`;
+
+    const byKey = new Map(matches.map(m => [mKey(m), m.id]));
+
+    for (const p of predictions) {
+      if (!p.matchId && p.teamA && p.teamB) {
+        const id = byKey.get(`${norm(p.teamA)}|${norm(p.teamB)}`);
+        if (id) {
+          p.matchId = id;
+          linked++;
+        }
+      }
+    }
+
+    if (linked > 0) await writeJSON("predictions.json", predictions);
+
+    res.json({ linked, total: predictions.length });
+  } catch (err) {
+    console.error("❌ relink-matches failed:", err);
+    res.status(500).json({ error: "Relink failed" });
+  }
 });
 
 // ==================== DEBUG ROUTES ====================
