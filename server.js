@@ -1035,6 +1035,36 @@ app.delete("/api/matches/:id", (req, res) => {
 // ==================== PREDICTIONS ====================
 app.get("/api/predictions", authenticateToken, async (req, res) => {
   const predictions = await readJSON("predictions.json");
+
+  // Admin can fetch everyone’s predictions
+  if (req.query.all === "1") {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    // optional expansion to include match & user objects
+    if (req.query.expand === "1") {
+      const [matches, users] = await Promise.all([
+        readJSON("matches.json"),
+        readJSON("users.json"),
+      ]);
+      const matchById = Object.fromEntries(matches.map((m) => [m.id, m]));
+      const userById = Object.fromEntries(users.map((u) => [u.id, u]));
+
+      return res.json(
+        predictions.map((p) => ({
+          ...p,
+          match: matchById[p.matchId] || null,
+          user: userById[p.userId] || null,
+        }))
+      );
+    }
+
+    // plain list of all predictions (no join)
+    return res.json(predictions);
+  }
+
+  // regular users: only their own predictions
   res.json(predictions.filter((p) => p.userId === req.user.id));
 });
 
