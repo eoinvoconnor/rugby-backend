@@ -1055,18 +1055,16 @@ app.delete("/api/matches/:id", authenticateToken, requireAdmin, async (req, res)
 // - admins: pass ?all=1 to see everyone
 // - pass ?expand=1 to embed match and user objects
 app.get("/api/predictions", authenticateToken, async (req, res) => {
+  res.set("Cache-Control", "no-store");   // 👈 add this
   try {
     const { all, expand } = req.query;
-
     let predictions = await readJSON("predictions.json");
 
-    // If not admin or ?all not requested, restrict to current user
     const isAdmin = !!req.user?.isAdmin;
     if (!isAdmin || all !== "1") {
       predictions = predictions.filter((p) => p.userId === req.user.id);
     }
 
-    // Optionally expand with match + user details
     if (expand === "1") {
       const [matches, users] = await Promise.all([
         readJSON("matches.json"),
@@ -1074,7 +1072,6 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
       ]);
       const matchById = new Map(matches.map((m) => [m.id, m]));
       const userById  = new Map(users.map((u) => [u.id, u]));
-
       predictions = predictions.map((p) => ({
         ...p,
         match: matchById.get(p.matchId) || null,
@@ -1091,37 +1088,42 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
 
 // ==================== PREDICTIONS (WRITE) ====================
 // Save/replace predictions for the authenticated user.
-// Accepts either a single object or an array of objects shaped like:
+// Accepts an object or an array like:
 // { matchId:number, predictedWinner:string, margin:number }
 app.post("/api/predictions", authenticateToken, async (req, res) => {
   try {
-    const body = Array.isArray(req.body) ? req.body : [req.body];
+    //load predicitons
+    const loadPredictions = async () => {
+      try {
+        // requires admin JWT; your apiFetch adds the Authorization header
+        const data = await apiFetch("/predictions?all=1&expand=1");
+        setPredictions(data);
+      } catch (err) {
+        console.error("❌ Failed to load predictions", err);
+      }
+    };
+    const items = Array.isArray(req.body) ? req.body : [req.body];
 
-    // Validate minimal shape
-    const valid = body.filter(
-      (p) =>
-        p &&
-        Number.isFinite(+p.matchId) &&
-        typeof p.predictedWinner === "string" &&
-        (p.margin === undefined || Number.isFinite(+p.margin))
+    const valid = items.filter((p) =>
+      p &&
+      Number.isFinite(+p.matchId) &&
+      typeof p.predictedWinner === "string" &&
+      (p.margin === undefined || Number.isFinite(+p.margin))
     );
 
     if (valid.length === 0) {
       return res.status(400).json({ error: "No valid predictions in payload" });
     }
 
-    // Read existing predictions
+    const userId = req.user.id;
     let predictions = await readJSON("predictions.json");
 
-    // Remove any existing predictions for these matchIds by this user
-    const userId = req.user.id;
-    const matchIdSet = new Set(valid.map((p) => Number(p.matchId)));
-
+    // replace current user's predictions for those matchIds
+    const incomingIds = new Set(valid.map((p) => Number(p.matchId)));
     predictions = predictions.filter(
-      (p) => !(p.userId === userId && matchIdSet.has(Number(p.matchId)))
+      (p) => !(p.userId === userId && incomingIds.has(Number(p.matchId)))
     );
 
-    // Add the new ones with userId stamped
     const toAdd = valid.map((p) => ({
       userId,
       matchId: Number(p.matchId),
@@ -1131,8 +1133,6 @@ app.post("/api/predictions", authenticateToken, async (req, res) => {
     }));
 
     predictions.push(...toAdd);
-
-    // Persist to /var/data/predictions.json
     await writeJSON("predictions.json", predictions);
 
     res.json({ success: true, saved: toAdd.length });
