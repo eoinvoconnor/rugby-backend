@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "scrape:statbunker": "node scripts/scrape-statbunker.mjs",
+    "scrape:statbunker": "node utils/scrape-statbunker.mjs",
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
