@@ -1,119 +1,135 @@
 // scripts/scrape-statbunker.mjs
+// ESM script (works with "type": "module")
 // Usage:
-//   node scripts/scrape-statbunker.mjs
-//   node scripts/scrape-statbunker.mjs "https://rugby.statbunker.com/competitions/LastMatches?comp_id=769&limit=10&offs=UTC"
-//
-// Notes:
-// - Tries to be resilient by discovering table headers dynamically (Home, Away, Score, Date).
-// - Computes winner + margin from the "Score" column (e.g., "27 - 24").
-// - Outputs clean JSON to stdout.
-//eoin
+//   npm run scrape:statbunker
+//   npm run scrape:statbunker -- "https://rugby.statbunker.com/competitions/LastMatches?comp_id=769&limit=50&offs=UTC"
 
-import axios from "axios";
-import * as cheerio from "cheerio";
+import cheerio from "cheerio";
 
-// default to Premiership recent matches (your example URL)
+// Node 18+ has global fetch; if you’re on older Node, add `node-fetch`.
 const DEFAULT_URL =
   "https://rugby.statbunker.com/competitions/LastMatches?comp_id=769&limit=10&offs=UTC";
 
-const url = process.argv[2] || DEFAULT_URL;
+const urlArg = process.argv.slice(2).join(" ").trim();
+const TARGET_URL = urlArg || DEFAULT_URL;
 
-function norm(s) {
-  return String(s || "").trim().replace(/\s+/g, " ");
+function normalize(str) {
+  return String(str || "")
+    .replace(/\s+/g, " ")
+    .replace(/\u00A0/g, " ")
+    .trim();
 }
 
-function pickIndexByHeader(ths, patterns) {
-  // Find the first <th> whose text matches any of the provided regexes
-  for (let i = 0; i < ths.length; i++) {
-    const text = norm(cheerio.load(ths[i]).text());
-    for (const re of patterns) {
-      if (re.test(text)) return i;
-    }
+function parseScorePair(text) {
+  // Tries to find: "<homeTeam> <homeScore> - <awayScore> <awayTeam>"
+  // or variants that contain a single hyphen between two numbers.
+  // Returns { homeTeam, awayTeam, homeScore, awayScore } or null
+  const t = normalize(text);
+
+  // First try a flexible regex:
+  // … TeamA … (digits) - (digits) … TeamB …
+  const rx = /(.*?)(\d+)\s*-\s*(\d+)(.*)/;
+  const m = t.match(rx);
+  if (!m) return null;
+
+  const left = normalize(m[1]);
+  const right = normalize(m[4]);
+  const homeScore = parseInt(m[2], 10);
+  const awayScore = parseInt(m[3], 10);
+
+  if (Number.isNaN(homeScore) || Number.isNaN(awayScore)) return null;
+
+  // Heuristics to split team names off the edges
+  // e.g. left might end with "Bath Rugby", right might start with " Exeter Chiefs"
+  // If the page has separate columns for teams, we’ll overwrite this later.
+  let homeTeam = left.replace(/[:\-|]+$/g, "").trim();
+  let awayTeam = right.replace(/^[:\-|]+/g, "").trim();
+
+  return { homeTeam, awayTeam, homeScore, awayScore };
+}
+
+function winnerAndMargin(homeTeam, awayTeam, homeScore, awayScore) {
+  if (homeScore > awayScore) {
+    return { winner: homeTeam, margin: homeScore - awayScore };
   }
-  return -1;
+  if (awayScore > homeScore) {
+    return { winner: awayTeam, margin: awayScore - homeScore };
+  }
+  return { winner: null, margin: 0 }; // draw or missing
 }
 
-function parseScore(scoreText) {
-  // e.g. "27 - 24", "27-24", "27–24"
-  const m = String(scoreText).match(/(\d+)\s*[-–]\s*(\d+)/);
-  if (!m) return { home: null, away: null };
-  return { home: parseInt(m[1], 10), away: parseInt(m[2], 10) };
-}
+async function main() {
+  console.log(`🌐 Fetching: ${TARGET_URL}`);
 
-(async () => {
-  try {
-    console.log(`🌐 Fetching Statbunker: ${url}`);
-    const { data: html } = await axios.get(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome Safari",
-          Accept: "text/html,application/xhtml+xml",
-      },
-      timeout: 30000,
+  const res = await fetch(TARGET_URL, {
+    headers: {
+      // Some sites block default fetch UA; give it a browsery one.
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36",
+      accept: "text/html,application/xhtml+xml",
+    },
+  });
+
+  if (!res.ok) {
+    console.error(`❌ HTTP ${res.status}`);
+    process.exit(1);
+  }
+
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  // Try to locate the results table(s).
+  // Statbunker often uses <table> with rows containing teams & scores.
+  // We’ll scan all rows and try to parse them with our score regex.
+  const rows = $("table tr");
+  const out = [];
+
+  rows.each((_, tr) => {
+    const $tr = $(tr);
+    const txt = normalize($tr.text());
+    if (!txt) return;
+
+    const parsed = parseScorePair(txt);
+    if (!parsed) return;
+
+    // Try to improve team names by looking at cells if available
+    const tds = $tr.find("td");
+    if (tds.length >= 4) {
+      // Common layout guess: [Date] [Home team] [Score] [Away team]
+      const cellHome = normalize($(tds.get(1)).text());
+      const cellScore = normalize($(tds.get(2)).text());
+      const cellAway = normalize($(tds.get(3)).text());
+
+      // If the score cell matches N - M, prefer cellHome/cellAway team names.
+      if (/\d+\s*-\s*\d+/.test(cellScore)) {
+        parsed.homeTeam = cellHome || parsed.homeTeam;
+        parsed.awayTeam = cellAway || parsed.awayTeam;
+      }
+    }
+
+    const { winner, margin } = winnerAndMargin(
+      parsed.homeTeam,
+      parsed.awayTeam,
+      parsed.homeScore,
+      parsed.awayScore
+    );
+
+    out.push({
+      homeTeam: parsed.homeTeam,
+      awayTeam: parsed.awayTeam,
+      homeScore: parsed.homeScore,
+      awayScore: parsed.awayScore,
+      winner,
+      margin,
+      rawRow: txt, // helpful while testing
     });
+  });
 
-    const $ = cheerio.load(html);
+  console.log(`📊 Parsed ${out.length} fixtures from page.`);
+  console.log(JSON.stringify(out, null, 2));
+}
 
-    // Heuristic: take the FIRST table on the page that has a thead + tbody
-    const table = $("table").filter((i, el) => $(el).find("thead th").length && $(el).find("tbody tr").length).first();
-    if (!table.length) {
-      console.log(JSON.stringify({ url, count: 0, results: [] }, null, 2));
-      return;
-    }
-
-    const ths = table.find("thead th").toArray();
-
-    // Dynamically locate columns
-    const idxHome  = pickIndexByHeader(ths, [/home/i, /team\s*a/i]);
-    const idxAway  = pickIndexByHeader(ths, [/away/i, /team\s*b/i]);
-    const idxScore = pickIndexByHeader(ths, [/score/i, /result/i]);
-    const idxDate  = pickIndexByHeader(ths, [/date/i, /kick.?off/i]);
-
-    const rows = table.find("tbody tr").toArray();
-
-    const results = rows
-      .map((tr) => {
-        const tds = $(tr).find("td").toArray();
-        if (!tds.length) return null;
-
-        const home  = idxHome  >= 0 ? norm($(tds[idxHome]).text())  : "";
-        const away  = idxAway  >= 0 ? norm($(tds[idxAway]).text())  : "";
-        const score = idxScore >= 0 ? norm($(tds[idxScore]).text()) : "";
-        const date  = idxDate  >= 0 ? norm($(tds[idxDate]).text())  : "";
-
-        if (!home || !away) return null;
-
-        const { home: sH, away: sA } = parseScore(score);
-        let winner = null;
-        let margin = null;
-
-        if (Number.isFinite(sH) && Number.isFinite(sA)) {
-          if (sH > sA) {
-            winner = home;
-            margin = sH - sA;
-          } else if (sA > sH) {
-            winner = away;
-            margin = sA - sH;
-          } // draws => winner stays null
-        }
-
-        return {
-          home,
-          away,
-          scoreHome: Number.isFinite(sH) ? sH : null,
-          scoreAway: Number.isFinite(sA) ? sA : null,
-          date,                 // human string; Statbunker format
-          winner,               // string or null
-          margin,               // number or null
-          source: "statbunker",
-        };
-      })
-      .filter(Boolean);
-
-    console.log(JSON.stringify({ url, count: results.length, results }, null, 2));
-  } catch (err) {
-    console.error("❌ Statbunker scrape failed:", err?.message || String(err));
-    process.exitCode = 1;
-  }
-})();
+main().catch((e) => {
+  console.error("❌ Scrape error:", e);
+  process.exit(1);
+});
