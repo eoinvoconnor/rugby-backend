@@ -1,216 +1,210 @@
-// backend/utils/resultsUpdater.cjs
-// CommonJS module (server is ESM but imports this CJS compatibly)
+// CommonJS module (server imports this with dynamic import and uses default or named export)
 
-const fs = require("fs/promises");
-const path = require("path");
+// Dependencies
 const axios = require("axios");
 const { JSDOM } = require("jsdom");
+const fs = require("fs/promises");
+const path = require("path");
 
+// Data dir (same as server.js)
 const DATA_DIR = process.env.DATA_DIR || "/var/data";
 
 // ---------- tiny fs helpers ----------
 async function readJSON(file) {
-  const fp = path.join(DATA_DIR, file);
+  const p = path.join(DATA_DIR, file);
   try {
-    const txt = await fs.readFile(fp, "utf8");
-    return txt ? JSON.parse(txt) : [];
-  } catch (e) {
-    if (e && e.code === "ENOENT") return [];
-    throw e;
+    const txt = await fs.readFile(p, "utf8");
+    return JSON.parse(txt || "[]");
+  } catch {
+    return [];
   }
 }
 async function writeJSON(file, data) {
-  const fp = path.join(DATA_DIR, file);
-  await fs.writeFile(fp, JSON.stringify(data, null, 2), "utf8");
+  const p = path.join(DATA_DIR, file);
+  await fs.writeFile(p, JSON.stringify(data, null, 2), "utf8");
 }
 
-// ---------- match & team helpers ----------
-function normalizeName(s) {
+// ---------- string helpers ----------
+function normalizeTeam(s) {
   return String(s || "")
+    // strip emojis & trophies commonly found on feeds
+    .replace(/[\u{1F3C0}-\u{1FAFF}\u{1F300}-\u{1F9FF}]/gu, "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/\s+/g, "")
     .replace(/[^a-z0-9]/g, "");
 }
-function normalizeFixtureKey(teamA, teamB) {
-  return `${normalizeName(teamA)}|${normalizeName(teamB)}`;
+
+function sameTeams(a1, a2, b1, b2) {
+  const A = normalizeTeam(a1), B = normalizeTeam(a2);
+  const X = normalizeTeam(b1), Y = normalizeTeam(b2);
+  return (A === X && B === Y) || (A === Y && B === X);
 }
 
 // ---------- BBC scraping ----------
 async function fetchBBCResults(dateStr) {
-  const url = `https://www.bbc.com/sport/rugby-union/scores-fixtures/${dateStr}`;
-  console.log(`🌐 Fetching BBC results for ${dateStr}...`);
+  // Try co.uk first, then com
+  const urls = [
+    `https://www.bbc.co.uk/sport/rugby-union/scores-fixtures/${dateStr}`,
+    `https://www.bbc.com/sport/rugby-union/scores-fixtures/${dateStr}`,
+  ];
 
-  try {
-    const { data: html } = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (rugby-predictions bot)",
-        Accept: "text/html,application/xhtml+xml",
-      },
-      timeout: 20000,
-    });
-
-    const dom = new JSDOM(html);
-    const doc = dom.window.document;
-
-    const out = [];
-
-    // Primary selector (BBC currently uses these testids)
-    let blocks = doc.querySelectorAll('[data-testid="match-block"]');
-
-    // Fallback if markup changes
-    if (!blocks || blocks.length === 0) {
-      blocks = doc.querySelectorAll("li.gs-o-list-ui__item, div.sp-c-fixture");
+  let html = null;
+  for (const url of urls) {
+    try {
+      const { data } = await axios.get(url, {
+        headers: { "User-Agent": "rugby-predictions/1.0" },
+        timeout: 20000,
+      });
+      html = data;
+      break;
+    } catch (e) {
+      // try next
     }
-
-    blocks.forEach((node) => {
-      try {
-        // Try testid selectors first
-        let teams = node.querySelectorAll('[data-testid="team-name"]');
-        let scores = node.querySelectorAll('[data-testid="team-score"]');
-
-        // Fallbacks if BBC changes attributes
-        if (teams.length !== 2) {
-          teams = node.querySelectorAll(".sp-c-fixture__team-name, .qa-full-team-name, .gs-u-display-none@m");
-        }
-        if (scores.length !== 2) {
-          scores = node.querySelectorAll(".sp-c-fixture__number, .sp-c-fixture__block a span");
-        }
-
-        if (teams.length === 2) {
-          const teamA = teams[0].textContent.trim();
-          const teamB = teams[1].textContent.trim();
-
-          // Not all fixtures have scores (upcoming); default nulls
-          let winner = null;
-          let margin = null;
-
-          if (scores.length === 2) {
-            const sA = parseInt(scores[0].textContent.trim(), 10);
-            const sB = parseInt(scores[1].textContent.trim(), 10);
-            if (Number.isFinite(sA) && Number.isFinite(sB)) {
-              if (sA > sB) {
-                winner = teamA;
-                margin = sA - sB;
-              } else if (sB > sA) {
-                winner = teamB;
-                margin = sB - sA;
-              } else {
-                // draw → leave winner null; margin 0 optional
-                margin = 0;
-              }
-            }
-          }
-
-          out.push({ teamA, teamB, winner, margin });
-        }
-      } catch (e) {
-        // keep scraping even if a single block fails
-      }
-    });
-
-    console.log(`📊 BBC scrape ${dateStr}: ${out.length} fixtures`);
-    return out;
-  } catch (err) {
-    console.error(`❌ Failed BBC fetch for ${dateStr}:`, err.message || err);
+  }
+  if (!html) {
+    console.warn(`⚠️ BBC fetch failed for ${dateStr} (both domains)`);
     return [];
   }
+
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
+
+  // Each fixture row
+  const rows = [...doc.querySelectorAll(".sp-c-fixture")];
+  const out = [];
+
+  for (const row of rows) {
+    try {
+      const teamEls = row.querySelectorAll(".sp-c-fixture__team-name");
+      if (teamEls.length !== 2) continue;
+
+      const t1 = teamEls[0].textContent.trim();
+      const t2 = teamEls[1].textContent.trim();
+
+      const scoreEls = row.querySelectorAll(".sp-c-fixture__number");
+      if (scoreEls.length !== 2) continue; // not completed
+
+      const s1 = parseInt(scoreEls[0].textContent.trim(), 10);
+      const s2 = parseInt(scoreEls[1].textContent.trim(), 10);
+      if (Number.isNaN(s1) || Number.isNaN(s2)) continue;
+
+      let winner = null, margin = null;
+      if (s1 > s2) { winner = t1; margin = s1 - s2; }
+      else if (s2 > s1) { winner = t2; margin = s2 - s1; }
+      else { winner = null; margin = 0; } // draw
+
+      out.push({
+        date: dateStr,
+        teamA: t1,
+        teamB: t2,
+        scoreA: s1,
+        scoreB: s2,
+        winner,
+        margin,
+      });
+    } catch (e) {
+      // ignore row
+    }
+  }
+
+  console.log(`📊 BBC scrape ${dateStr}: ${out.length} fixtures`);
+  return out;
 }
 
-// ---------- windowed fetch ----------
-async function fetchAllResults({ daysBack = 7, daysForward = 1 } = {}) {
+// Fetch results for a window around “today”
+async function fetchAllResults({ daysBack = 1, daysForward = 1 } = {}) {
   const today = new Date();
-  const dates = [];
-
+  today.setHours(0, 0, 0, 0);
+  const results = [];
   for (let d = -daysBack; d <= daysForward; d++) {
     const dt = new Date(today);
     dt.setDate(today.getDate() + d);
-    const yyyy = dt.getFullYear();
-    const mm = String(dt.getMonth() + 1).padStart(2, "0");
-    const dd = String(dt.getDate()).padStart(2, "0");
-    dates.push(`${yyyy}-${mm}-${dd}`);
+    const dateStr = dt.toISOString().slice(0, 10);
+    const day = await fetchBBCResults(dateStr);
+    results.push(...day);
   }
-
-  let all = [];
-  for (const dateStr of dates) {
-    const dayRes = await fetchBBCResults(dateStr);
-    all = all.concat(dayRes);
-  }
-  console.log(`📈 Total scraped across ${dates.length} day(s): ${all.length}`);
-  return all;
+  console.log(`📈 Total scraped across ${daysBack + daysForward + 1} day(s): ${results.length}`);
+  return results;
 }
 
-// ---------- updater (main export) ----------
+// Update matches & predictions from scraped results
 async function updateResultsFromSources(
   matchesArg,
   predictionsArg,
-  saveMatches,
-  savePredictions,
+  saveMatchesArg,
+  savePredictionsArg,
   opts = {}
 ) {
-  // When called from server cron/endpoint we don’t pass arrays;
-  // read/write files locally (DATA_DIR).
-  const usingFiles = !Array.isArray(matchesArg) && !Array.isArray(predictionsArg);
+  const { daysBack = 1, daysForward = 1 } = opts;
 
-  const matches = usingFiles ? await readJSON("matches.json") : matchesArg || [];
-  const predictions = usingFiles ? await readJSON("predictions.json") : predictionsArg || [];
+  // read files if not provided (standalone mode)
+  const matches = matchesArg || await readJSON("matches.json");
+  const predictions = predictionsArg || await readJSON("predictions.json");
 
-  const scraped = await fetchAllResults({
-    daysBack: Number.isFinite(+opts.daysBack) ? +opts.daysBack : 7,
-    daysForward: Number.isFinite(+opts.daysForward) ? +opts.daysForward : 1,
-  });
-
-  // Build quick lookup for stored fixtures (both directions A|B and B|A)
-  const matchByKey = new Map();
-  for (const m of matches) {
-    const k1 = normalizeFixtureKey(m.teamA, m.teamB);
-    const k2 = normalizeFixtureKey(m.teamB, m.teamA);
-    matchByKey.set(k1, m);
-    matchByKey.set(k2, m);
+  const scraped = await fetchAllResults({ daysBack, daysForward });
+  if (scraped.length === 0) {
+    console.log("ℹ️ Results updater: nothing to update.");
+    return 0;
   }
 
-  let updatedMatches = 0;
+  // Build quick index for predictions by matchId
+  const predsByMatchId = new Map();
+  for (const p of predictions) {
+    if (!predsByMatchId.has(p.matchId)) predsByMatchId.set(p.matchId, []);
+    predsByMatchId.get(p.matchId).push(p);
+  }
+
+  let updated = 0;
 
   for (const r of scraped) {
-    if (!r.winner) continue; // only finished games
+    // Try to find a match on the same calendar day (±36h tolerance) with same teams
+    for (const m of matches) {
+      if (!m.kickoff || !m.teamA || !m.teamB) continue;
 
-    const key = normalizeFixtureKey(r.teamA, r.teamB);
-    const match = matchByKey.get(key);
-    if (!match) continue;
+      const diffHours = Math.abs(new Date(m.kickoff) - new Date(r.date)) / 36e5;
+      if (diffHours > 36) continue; // not same day-ish
 
-    // if not already set, update
-    if (!match.result || !match.result.winner) {
-      match.result = { winner: r.winner, margin: r.margin ?? null };
-      updatedMatches++;
+      if (!sameTeams(m.teamA, m.teamB, r.teamA, r.teamB)) continue;
 
-      // award simple points now (adjust to your rules)
-      for (const p of predictions) {
-        if (p.matchId === match.id) {
-          p.points = p.predictedWinner && p.predictedWinner === r.winner ? 3 : 0;
+      // Only update if not already set (or allow overwrite if desired)
+      const already = m.result && m.result.winner != null;
+      const newWinner = r.winner;
+      const newMargin = r.margin;
+
+      if (!already && (newWinner != null)) {
+        m.result = { winner: newWinner, margin: newMargin };
+        updated++;
+
+        // score simple points for predictions (winner only)
+        const ps = predsByMatchId.get(m.id) || [];
+        for (const p of ps) {
+          p.points = (normalizeTeam(p.winner || p.predictedWinner) === normalizeTeam(newWinner)) ? 3 : 0;
         }
       }
     }
   }
 
-  if (updatedMatches > 0) {
-    if (usingFiles) {
-      await writeJSON("matches.json", matches);
-      await writeJSON("predictions.json", predictions);
-    } else {
-      // in-memory mode (not used in your deployment, but kept for API parity)
-      saveMatches?.();
-      savePredictions?.();
-    }
-    console.log(`✅ Results updater: updated ${updatedMatches} match(es).`);
+  if (updated > 0) {
+    if (saveMatchesArg) await saveMatchesArg();
+    else await writeJSON("matches.json", matches);
+
+    if (savePredictionsArg) await savePredictionsArg();
+    else await writeJSON("predictions.json", predictions);
+
+    console.log(`✅ Results updater: ${updated} matches updated (from ${scraped.length} scraped)`);
   } else {
-    console.log(`ℹ️ Results updater: nothing to update.`);
+    console.log(`ℹ️ Results updater: no new updates (scraped ${scraped.length})`);
   }
 
-  return updatedMatches;
+  return updated;
 }
 
-// CJS exports (support both default and named)
-module.exports = updateResultsFromSources;
-module.exports.updateResultsFromSources = updateResultsFromSources;
-module.exports.fetchBBCResults = fetchBBCResults;
-module.exports.fetchAllResults = fetchAllResults;
-module.exports.normalizeName = normalizeName;
+// Exports
+module.exports = {
+  normalize: normalizeTeam,
+  fetchBBCResults,
+  fetchAllResults,
+  updateResultsFromSources,
+  default: updateResultsFromSources,
+};
