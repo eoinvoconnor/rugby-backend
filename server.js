@@ -12,15 +12,6 @@ import axios from "axios";
 import ical from "node-ical";
 import { fileURLToPath } from "url";
 
-// Import CommonJS utility as ESM-compatible
-import resultsUpdaterModule from "./utils/resultsUpdater.cjs";
-
-
-
-// Support either `module.exports = fn` OR `module.exports = { updateResultsFromSources }`
-const mod = await import("./utils/resultsUpdater.cjs");
-const updateResultsFromSources = mod.default || mod.updateResultsFromSources;
-
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -330,12 +321,18 @@ app.get("/api/health", (req, res) => {
 // Optional query: ?daysBack=2&daysForward=3
 app.post("/api/admin/update-results", authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const mod = await import("./utils/resultsUpdater.cjs");
-    const updateResultsFromSources = mod.default || mod.updateResultsFromSources;
-
+    const m = await import("./utils/resultsUpdater.cjs");
+    const updateResultsFromSources =
+      (typeof m.updateResultsFromSources === "function" && m.updateResultsFromSources) ||
+      (typeof m.default === "function" && m.default) ||
+      (m.default && typeof m.default.updateResultsFromSources === "function" && m.default.updateResultsFromSources);
+    
+    if (!updateResultsFromSources) {
+      throw new Error("resultsUpdater.cjs did not expose updateResultsFromSources");
+    }
     // support optional window override
-    const daysBack = Number.isFinite(+req.query.daysBack) ? +req.query.daysBack : 1;
-    const daysForward = Number.isFinite(+req.query.daysForward) ? +req.query.daysForward : 1;
+    //const daysBack = Number.isFinite(+req.query.daysBack) ? +req.query.daysBack : 1;
+    //const daysForward = Number.isFinite(+req.query.daysForward) ? +req.query.daysForward : 1;
 
     // call in "standalone" mode so it reads/writes /var/data files itself
     const updated = await updateResultsFromSources(undefined, undefined, undefined, undefined, {
