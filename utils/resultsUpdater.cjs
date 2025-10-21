@@ -117,7 +117,7 @@ async function fetchBBCResults(dateStr) {
 }
 
 // ---------- windowed fetch ----------
-async function fetchAllResults({ daysBack = 1, daysForward = 1 } = {}) {
+async function fetchAllResults({ daysBack = 7, daysForward = 1 } = {}) {
   const today = new Date();
   const dates = [];
 
