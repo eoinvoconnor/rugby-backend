@@ -7,6 +7,7 @@
 // - Tries to be resilient by discovering table headers dynamically (Home, Away, Score, Date).
 // - Computes winner + margin from the "Score" column (e.g., "27 - 24").
 // - Outputs clean JSON to stdout.
+//eoin
 
 import axios from "axios";
 import * as cheerio from "cheerio";
