@@ -1089,6 +1089,48 @@ app.get("/api/predictions", authenticateToken, async (req, res) => {
   }
 });
 
+// Create/update current user's predictions for one or more matches
+app.post("/api/predictions", authenticateToken, async (req, res) => {
+  try {
+    // Accept either a single object or an array
+    const incoming = Array.isArray(req.body) ? req.body : [req.body];
+
+    // Basic shape: { matchId, predictedWinner, margin }
+    const now = new Date().toISOString();
+    const userId = req.user.id;
+
+    // Load existing predictions
+    let predictions = await readJSON("predictions.json");
+
+    // Remove any existing predictions for these matchIds by this user
+    const incomingMatchIds = new Set(incoming.map(p => Number(p.matchId)));
+    predictions = predictions.filter(
+      p => !(p.userId === userId && incomingMatchIds.has(Number(p.matchId)))
+    );
+
+    // Append new submissions (force userId from token)
+    const toAdd = incoming.map(p => ({
+      userId,
+      matchId: Number(p.matchId),
+      predictedWinner: String(p.predictedWinner || "").trim(),
+      margin: Number.isFinite(+p.margin) ? +p.margin : null,
+      createdAt: now,
+      updatedAt: now,
+      // optional lock flag you may compute server-side if you want
+      // locked: false
+    }));
+
+    predictions.push(...toAdd);
+
+    // Persist to disk in /var/data/predictions.json
+    await writeJSON("predictions.json", predictions);
+
+    res.json({ success: true, saved: toAdd.length });
+  } catch (err) {
+    console.error("❌ Save predictions failed:", err);
+    res.status(500).json({ error: "Failed to save predictions" });
+  }
+});
 
 // POST /api/admin/relink-matches  (admin only)
 app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (req, res) => {
