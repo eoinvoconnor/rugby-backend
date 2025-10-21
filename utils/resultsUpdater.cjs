@@ -155,7 +155,7 @@ async function updateResultsFromSources(
   const predictions = usingFiles ? await readJSON("predictions.json") : predictionsArg || [];
 
   const scraped = await fetchAllResults({
-    daysBack: Number.isFinite(+opts.daysBack) ? +opts.daysBack : 1,
+    daysBack: Number.isFinite(+opts.daysBack) ? +opts.daysBack : 7,
     daysForward: Number.isFinite(+opts.daysForward) ? +opts.daysForward : 1,
   });
 
