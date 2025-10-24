@@ -397,6 +397,96 @@ app.post(
   }
 );
 
+// ==================== LEADERBOARD (PUBLIC) ====================
+//
+// GET /api/leaderboard
+// Returns overall standings based on predictions.json
+// No auth needed for viewing.
+//
+// Shape returned:
+// [
+//   {
+//     userId: 2,
+//     firstname: "Dave",
+//     surname: "Parker",
+//     email: "dave@example.com",
+//     totalPoints: 17,
+//     correctPicks: 5,
+//     predictionsMade: 8
+//   },
+//   ...
+// ]
+
+app.get("/api/leaderboard", async (req, res) => {
+  try {
+    // pull current data from disk
+    const [users, predictions] = await Promise.all([
+      readJSON("users.json").catch(() => []),
+      readJSON("predictions.json").catch(() => []),
+    ]);
+
+    // aggregate points per user
+    const byUser = new Map();
+    for (const p of predictions) {
+      const uid = p.userId;
+      if (!uid) continue;
+
+      // ensure record
+      if (!byUser.has(uid)) {
+        byUser.set(uid, {
+          userId: uid,
+          totalPoints: 0,
+          correctPicks: 0,
+          predictionsMade: 0,
+        });
+      }
+
+      const bucket = byUser.get(uid);
+
+      // count predictions made
+      bucket.predictionsMade += 1;
+
+      // add scored points (the recalc step should already have written p.points)
+      const pts = Number(p.points || 0);
+      bucket.totalPoints += pts;
+
+      if (pts > 0) {
+        bucket.correctPicks += 1;
+      }
+    }
+
+    // join user info (name/email) onto each row
+    const userById = new Map(users.map(u => [u.id, u]));
+    const rows = Array.from(byUser.values()).map(row => {
+      const u = userById.get(row.userId) || {};
+      return {
+        userId: row.userId,
+        firstname: u.firstname || "",
+        surname: u.surname || "",
+        email: u.email || "",
+        totalPoints: row.totalPoints,
+        correctPicks: row.correctPicks,
+        predictionsMade: row.predictionsMade,
+      };
+    });
+
+    // sort: highest score first, then alphabetical name as tiebreak
+    rows.sort((a, b) => {
+      if (b.totalPoints !== a.totalPoints) {
+        return b.totalPoints - a.totalPoints;
+      }
+      const nameA = `${a.firstname} ${a.surname}`.toLowerCase();
+      const nameB = `${b.firstname} ${b.surname}`.toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ /api/leaderboard error:", err);
+    res.status(500).json({ error: "Failed to build leaderboard" });
+  }
+});
+
 // ==================== USERS ====================
 app.get("/api/users", authenticateToken, async (req, res) => {
   const users = await readJSON("users.json");
