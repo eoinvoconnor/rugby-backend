@@ -1333,6 +1333,173 @@ app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (re
   }
 });
 
+// ==================== LEADERBOARD / SCORING ====================
+
+// How many points a prediction earns, given an actual result
+function calculatePoints(predictedWinner, predictedMargin, actualWinner, actualMargin) {
+  // normalise
+  const pw = String(predictedWinner || "").trim().toLowerCase();
+  const aw = String(actualWinner || "").trim().toLowerCase();
+
+  const pm = predictedMargin === undefined || predictedMargin === null
+    ? null
+    : Number(predictedMargin);
+  const am = actualMargin === undefined || actualMargin === null
+    ? null
+    : Number(actualMargin);
+
+  let points = 0;
+  let correctWinner = false;
+
+  // winner correct?
+  if (pw && aw && pw === aw) {
+    correctWinner = true;
+    // base points for picking the right winner
+    points += 2;
+
+    // margin bonus if we have numbers
+    if (Number.isFinite(pm) && Number.isFinite(am)) {
+      const diff = Math.abs(pm - am);
+
+      // within 5 -> +1
+      if (diff <= 5) {
+        points += 1;
+      }
+
+      // EXACT margin -> +1 more (so exact = +2 bonus total)
+      if (diff === 0) {
+        points += 1;
+      }
+    }
+  }
+
+  return { points, correctWinner };
+}
+
+/**
+ * Build the leaderboard:
+ *  - read users, predictions, matches from disk
+ *  - for each finished match (has a result.winner)
+ *    - score each prediction
+ *  - aggregate totals per user
+ *  - write leaderboard.json
+ */
+app.post(
+  "/api/admin/recalc-leaderboard",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const [users, predictions, matches] = await Promise.all([
+        readJSON("users.json"),
+        readJSON("predictions.json"),
+        readJSON("matches.json"),
+      ]);
+
+      // Build lookup maps for convenience
+      const userById = new Map(users.map((u) => [u.id, u]));
+      const matchById = new Map(matches.map((m) => [m.id, m]));
+
+      // We'll build up a scoreboard keyed by userId
+      const scoreboard = {}; // { [userId]: { userId, firstname, surname, email, totalPoints, correctPicks, predictionsMade } }
+
+      // helper to init row
+      function ensureUserRow(uid) {
+        if (!scoreboard[uid]) {
+          const u = userById.get(uid) || {};
+          scoreboard[uid] = {
+            userId: uid,
+            firstname: u.firstname || "",
+            surname: u.surname || "",
+            email: u.email || "",
+            totalPoints: 0,
+            correctPicks: 0,
+            predictionsMade: 0,
+          };
+        }
+        return scoreboard[uid];
+      }
+
+      // Now walk every prediction
+      for (const p of predictions) {
+        const row = ensureUserRow(p.userId);
+
+        const match = matchById.get(p.matchId);
+        if (!match) {
+          // match no longer exists / purged
+          continue;
+        }
+
+        // count that they made a pick for this match
+        row.predictionsMade += 1;
+
+        // only score if we actually have a final result for that match
+        const actualWinner = match?.result?.winner || null;
+        const actualMargin = match?.result?.margin ?? null;
+
+        if (!actualWinner) {
+          // match hasn't been decided yet
+          continue;
+        }
+
+        const { points, correctWinner } = calculatePoints(
+          p.predictedWinner,
+          p.margin,
+          actualWinner,
+          actualMargin
+        );
+
+        row.totalPoints += points;
+        if (correctWinner) {
+          row.correctPicks += 1;
+        }
+      }
+
+      // turn scoreboard object into sorted array
+      const leaderboardArray = Object.values(scoreboard).sort((a, b) => {
+        // highest points first
+        if (b.totalPoints !== a.totalPoints) {
+          return b.totalPoints - a.totalPoints;
+        }
+        // tie-breaker: more correct picks
+        if (b.correctPicks !== a.correctPicks) {
+          return b.correctPicks - a.correctPicks;
+        }
+        // tie-breaker: fewer predictionsMade (more efficient picker)
+        return a.predictionsMade - b.predictionsMade;
+      });
+
+      // write to disk so GET /api/leaderboard can serve it fast
+      await writeJSON("leaderboard.json", leaderboardArray);
+
+      return res.json({
+        success: true,
+        updatedUsers: leaderboardArray.length,
+        message: `Leaderboard recalculated for ${leaderboardArray.length} users`,
+        leaderboard: leaderboardArray,
+      });
+    } catch (err) {
+      console.error("❌ Failed to recalc leaderboard:", err);
+      return res.status(500).json({
+        error: "Failed to recalc leaderboard",
+        details: err.message,
+      });
+    }
+  }
+);
+
+// Public leaderboard read endpoint
+app.get("/api/leaderboard", async (req, res) => {
+  try {
+    // Try the saved leaderboard first
+    const lb = await readJSON("leaderboard.json");
+    return res.json(lb);
+  } catch (err) {
+    console.warn("ℹ️ No leaderboard.json yet, building empty fallback");
+    return res.json([]);
+  }
+});
+
 // ==================== DEBUG ROUTES ====================
 app.get("/api/debug/files", async (req, res) => {
   try {
