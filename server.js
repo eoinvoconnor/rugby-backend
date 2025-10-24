@@ -351,47 +351,68 @@ app.post("/api/admin/update-results", authenticateToken, requireAdmin, async (re
   }
 });
 
-// Recalculate leaderboard / re-score predictions
+// ==================== LEADERBOARD RECALC ====================
+// POST /api/admin/recalc-leaderboard
 // Admin only
+// - reads matches.json + predictions.json
+// - (re)scores each prediction based on current match results
+// - writes predictions.json back to disk
+// - returns how many predictions were updated
 app.post(
   "/api/admin/recalc-leaderboard",
   authenticateToken,
   requireAdmin,
   async (req, res) => {
     try {
-      // 1. Load the latest matches + predictions from disk
+      // load latest data
       const [matches, predictions] = await Promise.all([
         readJSON("matches.json"),
         readJSON("predictions.json"),
       ]);
 
-      // build fast lookup for match by id
+      // quick index: matchId -> match
       const matchById = new Map(matches.map((m) => [m.id, m]));
 
-      let rescored = 0;
+      let touched = 0;
 
-      // 2. loop through predictions and assign points using scoring.js
+      // update each prediction's .points based on match.result
       for (const p of predictions) {
         const match = matchById.get(p.matchId);
-        const pts = calculatePoints(p, match); // <- 🔗 centralised scoring
-        p.points = pts;
-        rescored++;
+        if (!match || !match.result || !match.result.winner) {
+          // no final result yet, zero points / leave as-is?
+          continue;
+        }
+
+        const actualWinner = match.result.winner;
+        const actualMargin = match.result.margin;
+
+        const newPoints = calculatePoints({
+          predictedWinner: p.predictedWinner,
+          predictedMargin: p.margin,
+          actualWinner,
+          actualMargin,
+        });
+
+        if (p.points !== newPoints) {
+          p.points = newPoints;
+          touched++;
+        }
       }
 
-      // 3. write updated predictions back to disk
+      // save back to disk
       await writeJSON("predictions.json", predictions);
 
-      // 4. respond
+      // reply so the button can alert()
       res.json({
         success: true,
-        rescored,
-        message: `Recalculated ${rescored} predictions`,
+        updated: touched,
+        message: `Recalculated leaderboard. Updated ${touched} predictions.`,
       });
     } catch (err) {
-      console.error("❌ Recalc leaderboard failed:", err);
+      console.error("❌ Leaderboard recalc failed:", err);
       res.status(500).json({
         success: false,
-        error: err?.message || "Failed to recalc leaderboard",
+        error: "Failed to recalc leaderboard",
       });
     }
   }
