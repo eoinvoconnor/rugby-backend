@@ -1335,47 +1335,6 @@ app.post("/api/admin/relink-matches", authenticateToken, requireAdmin, async (re
 
 // ==================== LEADERBOARD / SCORING ====================
 
-// How many points a prediction earns, given an actual result
-function calculatePoints(predictedWinner, predictedMargin, actualWinner, actualMargin) {
-  // normalise
-  const pw = String(predictedWinner || "").trim().toLowerCase();
-  const aw = String(actualWinner || "").trim().toLowerCase();
-
-  const pm = predictedMargin === undefined || predictedMargin === null
-    ? null
-    : Number(predictedMargin);
-  const am = actualMargin === undefined || actualMargin === null
-    ? null
-    : Number(actualMargin);
-
-  let points = 0;
-  let correctWinner = false;
-
-  // winner correct?
-  if (pw && aw && pw === aw) {
-    correctWinner = true;
-    // base points for picking the right winner
-    points += 2;
-
-    // margin bonus if we have numbers
-    if (Number.isFinite(pm) && Number.isFinite(am)) {
-      const diff = Math.abs(pm - am);
-
-      // within 5 -> +1
-      if (diff <= 5) {
-        points += 1;
-      }
-
-      // EXACT margin -> +1 more (so exact = +2 bonus total)
-      if (diff === 0) {
-        points += 1;
-      }
-    }
-  }
-
-  return { points, correctWinner };
-}
-
 /**
  * Build the leaderboard:
  *  - read users, predictions, matches from disk
