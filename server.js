@@ -11,6 +11,7 @@ import cron from "node-cron";
 import axios from "axios";
 import ical from "node-ical";
 import { fileURLToPath } from "url";
+import { calculatePoints } from "./utils/scoring.js";
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -349,6 +350,52 @@ app.post("/api/admin/update-results", authenticateToken, requireAdmin, async (re
     res.status(500).json({ success: false, error: err.message || String(err) });
   }
 });
+
+// Recalculate leaderboard / re-score predictions
+// Admin only
+app.post(
+  "/api/admin/recalc-leaderboard",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      // 1. Load the latest matches + predictions from disk
+      const [matches, predictions] = await Promise.all([
+        readJSON("matches.json"),
+        readJSON("predictions.json"),
+      ]);
+
+      // build fast lookup for match by id
+      const matchById = new Map(matches.map((m) => [m.id, m]));
+
+      let rescored = 0;
+
+      // 2. loop through predictions and assign points using scoring.js
+      for (const p of predictions) {
+        const match = matchById.get(p.matchId);
+        const pts = calculatePoints(p, match); // <- 🔗 centralised scoring
+        p.points = pts;
+        rescored++;
+      }
+
+      // 3. write updated predictions back to disk
+      await writeJSON("predictions.json", predictions);
+
+      // 4. respond
+      res.json({
+        success: true,
+        rescored,
+        message: `Recalculated ${rescored} predictions`,
+      });
+    } catch (err) {
+      console.error("❌ Recalc leaderboard failed:", err);
+      res.status(500).json({
+        success: false,
+        error: err?.message || "Failed to recalc leaderboard",
+      });
+    }
+  }
+);
 
 // ==================== USERS ====================
 app.get("/api/users", authenticateToken, async (req, res) => {

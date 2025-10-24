@@ -1,7 +1,42 @@
+// backend/utils/scoring.js
+
+/**
+ * Normalize team name strings for consistent comparison.
+ */
+function normalize(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Core scoring rule — the single source of truth for points.
+ * - 3 points for correct winner + exact margin
+ * - 2 points for correct winner (margin different)
+ * - 0 points otherwise
+ */
+export function calculatePoints(prediction, match) {
+  if (!match?.result?.winner) return 0;
+
+  const correctWinner =
+    normalize(prediction.predictedWinner || prediction.winner) ===
+    normalize(match.result.winner);
+
+  if (!correctWinner) return 0;
+
+  const sameMargin =
+    match.result.margin &&
+    prediction.margin !== undefined &&
+    Number(prediction.margin) === Number(match.result.margin);
+
+  return sameMargin ? 4 : 2;
+}
+
 /**
  * Recalculate predictions for a single match.
  */
-function recalcPointsForMatch(matchId, matches, predictions, save, PREDICTIONS_FILE) {
+export function recalcPointsForMatch(matchId, matches, predictions, save, PREDICTIONS_FILE) {
   const match = matches.find((m) => m.id === matchId);
   if (!match || !match.result || !match.result.winner) return;
 
@@ -9,12 +44,7 @@ function recalcPointsForMatch(matchId, matches, predictions, save, PREDICTIONS_F
 
   predictions.forEach((p) => {
     if (p.matchId === matchId) {
-      if (p.winner === match.result.winner) {
-        // ✅ Correct winner
-        p.points = match.result.margin && p.margin === match.result.margin ? 3 : 2;
-      } else {
-        p.points = 0;
-      }
+      p.points = calculatePoints(p, match);
       updated++;
     }
   });
@@ -30,12 +60,12 @@ function recalcPointsForMatch(matchId, matches, predictions, save, PREDICTIONS_F
  * - Leaves existing results if BBC didn’t provide anything
  * - Flags recent matches with no result for manual attention
  */
-function recalcAllMatches(matches, predictions, newResults, save, MATCHES_FILE, PREDICTIONS_FILE) {
+export function recalcAllMatches(matches, predictions, newResults, save, MATCHES_FILE, PREDICTIONS_FILE) {
   const now = new Date();
   const flagged = []; // ⚠️ Matches needing manual update
 
   matches.forEach((match) => {
-    const newResult = newResults.find((r) => r.matchId === match.id);
+    const newResult = newResults?.find((r) => r.matchId === match.id);
 
     if (newResult) {
       // 🆕 BBC provided a result
@@ -43,7 +73,7 @@ function recalcAllMatches(matches, predictions, newResults, save, MATCHES_FILE, 
         winner: newResult.winner || match.result.winner,
         margin: newResult.margin || match.result.margin,
       };
-    } else if (!match.result || !match.result.winner) {
+    } else if (!match.result?.winner) {
       // ❌ No result anywhere
       const daysSinceKickoff = (now - new Date(match.kickoff)) / (1000 * 60 * 60 * 24);
       if (daysSinceKickoff < 7) {
@@ -58,14 +88,10 @@ function recalcAllMatches(matches, predictions, newResults, save, MATCHES_FILE, 
     }
 
     // 🔄 Always recalc predictions if match has a result
-    if (match.result && match.result.winner) {
+    if (match.result?.winner) {
       predictions.forEach((p) => {
         if (p.matchId === match.id) {
-          if (p.winner === match.result.winner) {
-            p.points = match.result.margin && p.margin === match.result.margin ? 3 : 2;
-          } else {
-            p.points = 0;
-          }
+          p.points = calculatePoints(p, match);
         }
       });
     }
@@ -80,7 +106,5 @@ function recalcAllMatches(matches, predictions, newResults, save, MATCHES_FILE, 
     console.warn(`⚠️ ${flagged.length} matches need manual updates.`);
   }
 
-  return flagged; // For showing in admin dashboard
+  return flagged;
 }
-
-module.exports = { recalcPointsForMatch, recalcAllMatches };
