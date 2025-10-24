@@ -11,7 +11,7 @@ import cron from "node-cron";
 import axios from "axios";
 import ical from "node-ical";
 import { fileURLToPath } from "url";
-import { calculatePoints } from "./scoring.js";
+import { calculatePoints } from "./utils/scoring.js";
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
