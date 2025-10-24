@@ -16,7 +16,7 @@ function normalize(name) {
  * - 2 points for correct winner (margin different)
  * - 0 points otherwise
  */
-export function calculatePoints(prediction, match) {
+export default function calculatePoints(predictedWinner, predictedMargin, actualWinner, actualMargin) {
   if (!match?.result?.winner) return 0;
 
   const correctWinner =
