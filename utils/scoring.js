@@ -1,5 +1,5 @@
 // backend/utils/scoring.js
-
+// new push
 /**
  * Normalize team name strings for consistent comparison.
  */
