@@ -120,6 +120,7 @@ function cleanTeamText(text, compName = "") {
     "Premiership",
     "PREM Rugby Cup",
     "Gallagher Premiership"
+    "Quilter Nations Servies:"
   ]
     .filter(Boolean)
     .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape regex chars
