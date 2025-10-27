@@ -119,7 +119,7 @@ function cleanTeamText(text, compName = "") {
     "PREM",
     "Premiership",
     "PREM Rugby Cup",
-    "Gallagher Premiership"
+    "Gallagher Premiership",
     "Quilter Nations Servies:"
   ]
     .filter(Boolean)
