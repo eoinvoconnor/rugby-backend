@@ -54,6 +54,18 @@ async function fetchBBCResultsForDate(dateISO, todaysMatches) {
       );
     });
 
+    const html = await res.text();
+
+    // Ensure scrape directory exists
+    const scrapeDir = path.join(__dirname, "../scrape");
+    if (!fs.existsSync(scrapeDir)) {
+      fs.mkdirSync(scrapeDir);
+    }
+    
+    // Write BBC HTML to scrape/bbc-YYYY-MM-DD.html
+    const outPath = path.join(scrapeDir, `bbc-${dateISO}.html`);
+    fs.writeFileSync(outPath, html, "utf8");
+
     if (!span) {
       console.log(`❌ No BBC result found for: ${a} vs ${b}`);
       continue;
