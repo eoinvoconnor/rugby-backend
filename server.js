@@ -35,8 +35,7 @@ console.log(`💾 Using data directory: ${DATA_DIR}`);
 
 // cron job for results update
 import cron from "node-cron";
-import resultsUpdater from "./utils/resultsUpdater.js";
-const { updateResultsFromSources } = resultsUpdater;
+import { updateResultsFromSources } from "./utils/resultsUpdater.js";
 
 cron.schedule("0 7 * * *", async () => {
   console.log("🕒 Running scheduled BBC result update...");
