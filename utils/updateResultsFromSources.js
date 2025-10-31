@@ -34,17 +34,23 @@ async function fetchBBCResultsForDate(dateISO) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
   const html = await res.text();
+  fs.writeFileSync(`./bbc-${dateISO}.html`, html);
+  console.log(`📝 BBC raw HTML for ${dateISO} written to file`);
+
   const dom = new JSDOM(html);
   const document = dom.window.document;
 
-  const results = [];
   const pattern = /^(.+?) (\d+), (.+?) (\d+) at full time, (.+?) win (\d+) - (\d+)$/i;
 
-  document.querySelectorAll("span.visually-hidden").forEach((el) => {
+  const hiddenSpans = Array.from(document.querySelectorAll('span[class*="visually-hidden"]'));
+  console.log(`🔍 Found ${hiddenSpans.length} visually-hidden spans on ${dateISO}`);
+
+  const results = [];
+  hiddenSpans.forEach((el) => {
     const text = el.textContent?.trim();
     const match = text.match(pattern);
     if (match) {
-      const [, teamA, scoreA, teamB, scoreB, winner, finalA, finalB] = match;
+      const [, teamA, scoreA, teamB, scoreB, winner] = match;
       results.push({
         date: dateISO,
         home: normalizeTeamName(teamA),
