@@ -28,41 +28,53 @@ function getDatesInRange(centerDateISO, back = 1, forward = 0) {
   return dates;
 }
 
-async function fetchBBCResultsForDate(dateISO) {
+async function fetchBBCResultsForDate(dateISO, todaysMatches) {
   const url = `https://www.bbc.co.uk/sport/rugby-union/scores-fixtures/${dateISO}`;
   console.log(`🌐 Fetching BBC results for ${dateISO}`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
   const html = await res.text();
-  fs.writeFileSync(`./bbc-${dateISO}.html`, html);
-  console.log(`📝 BBC raw HTML for ${dateISO} written to file`);
-
   const dom = new JSDOM(html);
   const document = dom.window.document;
 
   const pattern = /^(.+?) (\d+), (.+?) (\d+) at full time, (.+?) win (\d+) - (\d+)$/i;
-
   const hiddenSpans = Array.from(document.querySelectorAll('span[class*="visually-hidden"]'));
   console.log(`🔍 Found ${hiddenSpans.length} visually-hidden spans on ${dateISO}`);
 
   const results = [];
-  hiddenSpans.forEach((el) => {
-    const text = el.textContent?.trim();
-    const match = text.match(pattern);
-    if (match) {
-      const [, teamA, scoreA, teamB, scoreB, winner] = match;
+  for (const match of todaysMatches) {
+    const a = normalizeTeamName(match.teamA);
+    const b = normalizeTeamName(match.teamB);
+
+    const span = hiddenSpans.find(span => {
+      const text = span.textContent || "";
+      return (
+        text.toLowerCase().includes(a.toLowerCase()) ||
+        text.toLowerCase().includes(b.toLowerCase())
+      );
+    });
+
+    if (!span) {
+      console.log(`❌ No BBC result found for: ${a} vs ${b}`);
+      continue;
+    }
+
+    const matchResult = span.textContent.match(pattern);
+    if (matchResult) {
+      const [, team1, score1, team2, score2, winner] = matchResult;
+      console.log(`✅ Found result for ${a} vs ${b}: ${span.textContent}`);
       results.push({
-        date: dateISO,
-        home: normalizeTeamName(teamA),
-        away: normalizeTeamName(teamB),
-        homeScore: parseInt(scoreA, 10),
-        awayScore: parseInt(scoreB, 10),
+        home: normalizeTeamName(team1),
+        away: normalizeTeamName(team2),
+        homeScore: parseInt(score1, 10),
+        awayScore: parseInt(score2, 10),
         winner: normalizeTeamName(winner),
       });
+    } else {
+      console.log(`⚠️ Found span but failed to parse result for: ${a} vs ${b}`);
     }
-  });
+  }
 
-  console.log(`📊 BBC scrape ${dateISO}: ${results.length} fixtures`);
   return results;
 }
 
@@ -70,16 +82,6 @@ async function updateResultsFromSources(_a, _b, _c, _d, options = {}) {
   const { daysBack = 1, daysForward = 0 } = options;
   const todayISO = new Date().toISOString().slice(0, 10);
   const dates = getDatesInRange(todayISO, daysBack, daysForward);
-
-  let allResults = [];
-  for (const date of dates) {
-    try {
-      const res = await fetchBBCResultsForDate(date);
-      allResults.push(...res);
-    } catch (err) {
-      console.warn(`⚠️ Error fetching ${date}:`, err.message);
-    }
-  }
 
   if (!fs.existsSync(matchesPath)) {
     console.warn("⚠️ No matches.json found to update.");
@@ -89,35 +91,40 @@ async function updateResultsFromSources(_a, _b, _c, _d, options = {}) {
   const matches = JSON.parse(fs.readFileSync(matchesPath, "utf8"));
   let updatedCount = 0;
 
-  matches.forEach((match) => {
-    const matchTeamA = normalizeTeamName(match.teamA);
-    const matchTeamB = normalizeTeamName(match.teamB);
+  for (const date of dates) {
+    const todaysMatches = matches.filter(m => m.date === date);
+    if (todaysMatches.length === 0) continue;
 
-    const result = allResults.find(
-      (r) =>
-        normalizeTeamName(r.home) === matchTeamA &&
-        normalizeTeamName(r.away) === matchTeamB
-    );
+    try {
+      const results = await fetchBBCResultsForDate(date, todaysMatches);
 
-    if (!result) {
-      console.log(`❌ No match found for: ${matchTeamA} vs ${matchTeamB}`);
-    } else {
-      console.log(`✅ Matched: ${matchTeamA} vs ${matchTeamB} → ${result.winner}`);
-      match.result = {
-        winner: result.winner,
-        margin: Math.abs(result.homeScore - result.awayScore),
-      };
-      updatedCount++;
+      for (const match of todaysMatches) {
+        const matchTeamA = normalizeTeamName(match.teamA);
+        const matchTeamB = normalizeTeamName(match.teamB);
+
+        const result = results.find(
+          r => normalizeTeamName(r.home) === matchTeamA && normalizeTeamName(r.away) === matchTeamB
+        );
+
+        if (!result) {
+          console.log(`❌ Could not update result for: ${matchTeamA} vs ${matchTeamB}`);
+          continue;
+        }
+
+        match.result = {
+          winner: result.winner,
+          margin: Math.abs(result.homeScore - result.awayScore),
+        };
+        updatedCount++;
+        console.log(`✅ Updated match: ${matchTeamA} vs ${matchTeamB}`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ Error fetching or parsing results for ${date}:`, err.message);
     }
-  });
+  }
 
   fs.writeFileSync(matchesPath, JSON.stringify(matches, null, 2), "utf8");
-  console.log(`📈 Total scraped across ${dates.length} day(s): ${allResults.length}`);
-  console.log(
-    updatedCount > 0
-      ? `✅ Results updater: updated ${updatedCount} match(es).`
-      : `ℹ️ Results updater: nothing to update.`
-  );
+  console.log(`📈 Total match results updated: ${updatedCount}`);
   return { updatedCount };
 }
 
