@@ -7,7 +7,6 @@ import fs from "fs/promises";
 import path from "path";
 import cors from "cors";
 import jwt from "jsonwebtoken";
-import cron from "node-cron";
 import axios from "axios";
 import ical from "node-ical";
 import { fileURLToPath } from "url";
@@ -33,6 +32,23 @@ if (!fsSync.existsSync(DATA_DIR)) {
 }
 
 console.log(`💾 Using data directory: ${DATA_DIR}`);
+
+// cron job for results update
+import cron from "node-cron";
+import { updateResultsFromSources } from "./utils/resultsUpdater.cjs"; // adjust for ES/CJS style
+
+cron.schedule("0 3 * * *", async () => {
+  console.log("🕒 Running scheduled BBC result update...");
+  try {
+    await updateResultsFromSources(undefined, undefined, undefined, undefined, {
+      daysBack: 2,
+      daysForward: 0
+    });
+    console.log("✅ Daily update completed.");
+  } catch (err) {
+    console.error("❌ Cron update failed:", err.message);
+  }
+});
 
 // ==================== MIDDLEWARE ====================
 app.use(express.json());
