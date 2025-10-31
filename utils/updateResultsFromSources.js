@@ -83,13 +83,19 @@ async function updateResultsFromSources(_a, _b, _c, _d, options = {}) {
   let updatedCount = 0;
 
   matches.forEach((match) => {
+    const matchTeamA = normalizeTeamName(match.teamA);
+    const matchTeamB = normalizeTeamName(match.teamB);
+
     const result = allResults.find(
       (r) =>
-        normalizeTeamName(r.home) === normalizeTeamName(match.teamA) &&
-        normalizeTeamName(r.away) === normalizeTeamName(match.teamB)
+        normalizeTeamName(r.home) === matchTeamA &&
+        normalizeTeamName(r.away) === matchTeamB
     );
 
-    if (result) {
+    if (!result) {
+      console.log(`❌ No match found for: ${matchTeamA} vs ${matchTeamB}`);
+    } else {
+      console.log(`✅ Matched: ${matchTeamA} vs ${matchTeamB} → ${result.winner}`);
       match.result = {
         winner: result.winner,
         margin: Math.abs(result.homeScore - result.awayScore),
