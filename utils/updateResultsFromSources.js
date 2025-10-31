@@ -56,21 +56,29 @@ async function fetchBBCResultsForDate(dateISO, todaysMatches) {
 
     const html = await res.text();
 
+    // Log what we're doing
+    console.log(`🧪 Fetched HTML from BBC (${html.length} chars)`);
+    
     // Ensure scrape directory exists
-    const scrapeDir = path.join(__dirname, "../scrape");
-    if (!fs.existsSync(scrapeDir)) {
-      fs.mkdirSync(scrapeDir);
+    const scrapeDir = path.join(__dirname, "..", "scrape");
+    try {
+      if (!fs.existsSync(scrapeDir)) {
+        fs.mkdirSync(scrapeDir, { recursive: true });
+        console.log("📁 Created /scrape directory");
+      }
+    } catch (e) {
+      console.warn("⚠️ Failed to create scrape directory:", e.message);
     }
     
-    // Write BBC HTML to scrape/bbc-YYYY-MM-DD.html
-    const outPath = path.join(scrapeDir, `bbc-${dateISO}.html`);
-    fs.writeFileSync(outPath, html, "utf8");
-
-    if (!span) {
-      console.log(`❌ No BBC result found for: ${a} vs ${b}`);
-      continue;
+    // Write the file
+    try {
+      const outPath = path.join(scrapeDir, `bbc-${dateISO}.html`);
+      fs.writeFileSync(outPath, html, "utf8");
+      console.log(`💾 Saved HTML to ${outPath}`);
+    } catch (e) {
+      console.warn(`⚠️ Failed to write HTML for ${dateISO}:`, e.message);
     }
-
+    
     const matchResult = span.textContent.match(pattern);
     if (matchResult) {
       const [, team1, score1, team2, score2, winner] = matchResult;
