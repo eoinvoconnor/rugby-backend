@@ -37,7 +37,7 @@ console.log(`💾 Using data directory: ${DATA_DIR}`);
 import cron from "node-cron";
 import { updateResultsFromSources } from "./utils/resultsUpdater.cjs"; // adjust for ES/CJS style
 
-cron.schedule("0 3 * * *", async () => {
+cron.schedule("0 7 * * *", async () => {
   console.log("🕒 Running scheduled BBC result update...");
   try {
     await updateResultsFromSources(undefined, undefined, undefined, undefined, {
