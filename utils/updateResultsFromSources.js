@@ -29,19 +29,51 @@ function getDatesInRange(centerDateISO, back = 1, forward = 0) {
 }
 
 async function fetchBBCResultsForDate(dateISO, todaysMatches) {
+  console.log(`📅 Starting scrape for BBC results on ${dateISO}`);
+
   const url = `https://www.bbc.co.uk/sport/rugby-union/scores-fixtures/${dateISO}`;
-  console.log(`🌐 Fetching BBC results for ${dateISO}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
+  console.log(`🌐 Fetching: ${url}`);
+
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    console.warn(`❌ Fetch failed: ${err.message}`);
+    return [];
+  }
+
+  console.log(`🔁 Response status: ${res.status}`);
+
+  if (!res.ok) {
+    console.warn(`❌ BBC returned HTTP ${res.status} for ${url}`);
+    return [];
+  }
+
   const html = await res.text();
+  console.log(`📄 HTML fetched (${html.length} chars)`);
+
+  // Save the HTML for inspection
+  const scrapeDir = path.join(__dirname, "..", "scrape");
+  try {
+    if (!fs.existsSync(scrapeDir)) {
+      fs.mkdirSync(scrapeDir, { recursive: true });
+      console.log("📁 Created /scrape directory");
+    }
+    const outPath = path.join(scrapeDir, `bbc-${dateISO}.html`);
+    fs.writeFileSync(outPath, html, "utf8");
+    console.log(`💾 Saved HTML to ${outPath}`);
+  } catch (e) {
+    console.warn(`⚠️ Could not save BBC HTML: ${e.message}`);
+  }
+
   const dom = new JSDOM(html);
   const document = dom.window.document;
-
-  const pattern = /^(.+?) (\d+), (.+?) (\d+) at full time, (.+?) win (\d+) - (\d+)$/i;
   const hiddenSpans = Array.from(document.querySelectorAll('span[class*="visually-hidden"]'));
   console.log(`🔍 Found ${hiddenSpans.length} visually-hidden spans on ${dateISO}`);
 
+  const pattern = /^(.+?) (\d+), (.+?) (\d+) at full time, (.+?) win (\d+) - (\d+)$/i;
   const results = [];
+
   for (const match of todaysMatches) {
     const a = normalizeTeamName(match.teamA);
     const b = normalizeTeamName(match.teamB);
@@ -54,31 +86,11 @@ async function fetchBBCResultsForDate(dateISO, todaysMatches) {
       );
     });
 
-    const html = await res.text();
+    if (!span) {
+      console.log(`❌ No BBC result text found for ${a} or ${b}`);
+      continue;
+    }
 
-    // Log what we're doing
-    console.log(`🧪 Fetched HTML from BBC (${html.length} chars)`);
-    
-    // Ensure scrape directory exists
-    const scrapeDir = path.join(__dirname, "..", "scrape");
-    try {
-      if (!fs.existsSync(scrapeDir)) {
-        fs.mkdirSync(scrapeDir, { recursive: true });
-        console.log("📁 Created /scrape directory");
-      }
-    } catch (e) {
-      console.warn("⚠️ Failed to create scrape directory:", e.message);
-    }
-    
-    // Write the file
-    try {
-      const outPath = path.join(scrapeDir, `bbc-${dateISO}.html`);
-      fs.writeFileSync(outPath, html, "utf8");
-      console.log(`💾 Saved HTML to ${outPath}`);
-    } catch (e) {
-      console.warn(`⚠️ Failed to write HTML for ${dateISO}:`, e.message);
-    }
-    
     const matchResult = span.textContent.match(pattern);
     if (matchResult) {
       const [, team1, score1, team2, score2, winner] = matchResult;
@@ -92,6 +104,7 @@ async function fetchBBCResultsForDate(dateISO, todaysMatches) {
       });
     } else {
       console.log(`⚠️ Found span but failed to parse result for: ${a} vs ${b}`);
+      console.log(`↪️ Text: ${span.textContent}`);
     }
   }
 
