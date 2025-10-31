@@ -4,9 +4,12 @@ const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
+console.log("✅ resultsUpdater.cjs is loaded");
 
 const aliases = require("../data/team-aliases.json");
 const matchesPath = path.join(__dirname, "../data/matches.json");
+
+console.log("🚀 updateResultsFromSources function is running");
 
 function normalizeTeamName(raw) {
   const name = String(raw || "").trim();
