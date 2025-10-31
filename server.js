@@ -35,7 +35,7 @@ console.log(`💾 Using data directory: ${DATA_DIR}`);
 
 // cron job for results update
 import cron from "node-cron";
-import resultsUpdater from "./utils/resultsUpdater.cjs";
+import resultsUpdater from "./utils/resultsUpdater.js";
 const { updateResultsFromSources } = resultsUpdater;
 
 cron.schedule("0 7 * * *", async () => {
@@ -341,14 +341,14 @@ app.get("/api/health", (req, res) => {
 app.post("/api/admin/update-results", authenticateToken, requireAdmin, async (req, res) => {
   try {
     // Dynamically load the CJS helper and resolve the function regardless of export style
-    const m = await import("./utils/resultsUpdater.cjs");
+    const m = await import("./utils/resultsUpdater.js");
     const updateResultsFromSources =
       (typeof m.updateResultsFromSources === "function" && m.updateResultsFromSources) ||
       (typeof m.default === "function" && m.default) ||
       (m.default && typeof m.default.updateResultsFromSources === "function" && m.default.updateResultsFromSources);
 
     if (!updateResultsFromSources) {
-      throw new Error("resultsUpdater.cjs did not expose updateResultsFromSources");
+      throw new Error("resultsUpdater.js did not expose updateResultsFromSources");
     }
 
     // Read optional window from query with sane defaults
