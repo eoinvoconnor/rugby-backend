@@ -38,24 +38,25 @@ async function fetchBBCResultsForDate(dateISO) {
   const document = dom.window.document;
 
   const results = [];
-  document.querySelectorAll(".sp-c-fixture").forEach((el) => {
-    const home = el.querySelector(".sp-c-fixture__team--home .sp-c-fixture__team-name")?.textContent?.trim();
-    const away = el.querySelector(".sp-c-fixture__team--away .sp-c-fixture__team-name")?.textContent?.trim();
-    const score = el.querySelector(".sp-c-fixture__number--ft")?.textContent?.trim();
+  const pattern = /^(.+?) (\d+), (.+?) (\d+) at full time, (.+?) win (\d+) - (\d+)$/i;
 
-    if (home && away && score) {
-      const [homeScore, awayScore] = score.split("-").map((s) => parseInt(s.trim(), 10));
+  document.querySelectorAll("span.visually-hidden").forEach((el) => {
+    const text = el.textContent?.trim();
+    const match = text.match(pattern);
+    if (match) {
+      const [, teamA, scoreA, teamB, scoreB, winner, finalA, finalB] = match;
       results.push({
         date: dateISO,
-        home: normalizeTeamName(home),
-        away: normalizeTeamName(away),
-        homeScore,
-        awayScore,
-        winner: homeScore > awayScore ? normalizeTeamName(home) : normalizeTeamName(away),
+        home: normalizeTeamName(teamA),
+        away: normalizeTeamName(teamB),
+        homeScore: parseInt(scoreA, 10),
+        awayScore: parseInt(scoreB, 10),
+        winner: normalizeTeamName(winner),
       });
     }
   });
-  console.log(`✅ ${results.length} results scraped for ${dateISO}`);
+
+  console.log(`📊 BBC scrape ${dateISO}: ${results.length} fixtures`);
   return results;
 }
 
@@ -105,7 +106,12 @@ async function updateResultsFromSources(_a, _b, _c, _d, options = {}) {
   });
 
   fs.writeFileSync(matchesPath, JSON.stringify(matches, null, 2), "utf8");
-  console.log(`✅ Updated ${updatedCount} matches in matches.json`);
+  console.log(`📈 Total scraped across ${dates.length} day(s): ${allResults.length}`);
+  console.log(
+    updatedCount > 0
+      ? `✅ Results updater: updated ${updatedCount} match(es).`
+      : `ℹ️ Results updater: nothing to update.`
+  );
   return { updatedCount };
 }
 
