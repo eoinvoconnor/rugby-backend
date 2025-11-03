@@ -3,6 +3,10 @@ import axios from "axios";
 import ical from "node-ical";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export const competitionsFile = path.join(__dirname, "../data/competitions.json");
 export const matchesFile = path.join(__dirname, "../data/matches.json");
