@@ -84,6 +84,60 @@ export async function importMatchesFromICS(comp) {
     }
   }
 
+// --- Helpers for cleaning feed titles (eCal / ICS) ---
+function cleanTeamText(text, compName = "") {
+  if (!text) return "";
+
+  // Normalize spaces
+  let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
+
+  // Remove common emojis/icons that appear in summaries
+  t = t.replace(/[🏉🏆]/g, "");
+  t = t.replace(/\p{Extended_Pictographic}/gu, ""); // remove all emoji characters
+
+  // Remove competition prefixes and flag emojis
+const prefixes = [
+  compName,
+  "URC",
+  "PREM",
+  "Premiership",
+  "English Prem Rugby Cup",
+  "Gallagher Premiership",
+  "Quilter Autumn Series",
+  "Quilter Nations Series",
+  "Top 14",
+  "International",
+  "Challenge Cup",
+  "Champions Cup"
+]
+  .filter(Boolean)
+  .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape for regex
+  .join("|");
+
+// Regex to trim prefixes + emojis like 🇫🇷 etc.
+t = t
+  .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "") // 🏴 remove flags
+  .replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "") // remove prefix
+  .trim();
+
+  return t;
+}
+
+// Split a summary into [teamA, teamB] using common separators
+function splitTeamsFromSummary(summary, compName = "") {
+  const s = String(summary || "");
+  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i); // "vs", "vs.", or "v"
+  if (!rawA || !rawB) {
+    // Fallback: no split; return as-is
+    const cleaned = cleanTeamText(s, compName);
+    return [cleaned, "TBD"];
+  }
+  return [
+    cleanTeamText(rawA, compName),
+    cleanTeamText(rawB, compName),
+  ];
+}
+
   saveJSON(matchesFile, matches);
   return { added, updated };
 }
