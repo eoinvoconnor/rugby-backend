@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to team-aliases.json in utils/data folder
-const aliasFile = path.join(__dirname, "data", "team-aliases.json");
+const aliasFile = path.join(__dirname, "..", "data", "team-aliases.json");
 let teamAliases = {};
 
 try {
