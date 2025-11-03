@@ -137,6 +137,7 @@ function cleanTeamText(text, compName = "") {
 
   // Remove common emojis/icons that appear in summaries
   t = t.replace(/[🏉🏆]/g, "");
+  t = t.replace(/\p{Extended_Pictographic}/gu, ""); // remove all emoji characters
 
   // Remove competition prefixes and flag emojis
 const prefixes = [
@@ -196,20 +197,21 @@ function parseIcsToMatches(icsText, comp) {
 
     // Try split on " vs " or " v "
     const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name || "");
-    
+
     if (!kickoff || !teamA || !teamB) continue;
 
-    out.push({
-      // id assigned during upsert
-      competitionId: comp.id,
-      competitionName: comp.name,
-      competitionColor: comp.color || "#888888",
-      teamA,
-      teamB,
-      kickoff: kickoff.toISOString(),
-      // keep your current result shape
-      result: { winner: null, margin: null },
-    });
+teamA = cleanTeamText(teamA, comp.name);
+teamB = cleanTeamText(teamB, comp.name);
+
+out.push({
+  competitionId: comp.id,
+  competitionName: comp.name,
+  competitionColor: comp.color || "#888888",
+  teamA,
+  teamB,
+  kickoff: kickoff.toISOString(),
+  result: { winner: null, margin: null },
+});
   }
   return out;
 }
