@@ -11,6 +11,7 @@ import axios from "axios";
 import ical from "node-ical";
 import { fileURLToPath } from "url";
 import calculatePoints from "./utils/scoring.js";
+import { refreshCompetitions } from "./utils/competitionUpdater.js"; // adjust path if needed
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -49,6 +50,16 @@ cron.schedule("0 7 * * *", async () => {
     console.error("❌ Cron update failed:", err.message);
   }
 });
+cron.schedule("0 5 * * 1", async () => {
+  console.log("🔁 Running weekly competition refresh...");
+  try {
+    await refreshCompetitions(); // Your update function
+    console.log("✅ Weekly competition update complete.");
+  } catch (err) {
+    console.error("❌ Competition update failed:", err.message);
+  }
+});
+
 
 // ==================== MIDDLEWARE ====================
 app.use(express.json());
@@ -127,32 +138,30 @@ function cleanTeamText(text, compName = "") {
   // Remove common emojis/icons that appear in summaries
   t = t.replace(/[🏉🏆]/g, "");
 
-  // Remove an explicit “competition prefix”, e.g. "URC:" or "PREM..." at the start
-  // Use compName if present, otherwise a generic set (URC, PREM, Premiership, etc)
-  const prefixes = [
-    compName,              // exact competition name if present
-    "URC",
-    "PREM",
-    "Premiership",
-    "PREM Rugby Cup",
-    "Gallagher Premiership",
-    "Quilter Nations Series"
-  ]
-    .filter(Boolean)
-    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape regex chars
-    .join("|");
+  // Remove competition prefixes and flag emojis
+const prefixes = [
+  compName,
+  "URC",
+  "PREM",
+  "Premiership",
+  "English Prem Rugby Cup",
+  "Gallagher Premiership",
+  "Quilter Autumn Series",
+  "Quilter Nations Series",
+  "Top 14",
+  "International",
+  "Challenge Cup",
+  "Champions Cup"
+]
+  .filter(Boolean)
+  .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape for regex
+  .join("|");
 
-  if (prefixes) {
-    t = t.replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "");
-  }
-
-  // Remove suffixes like: "| 🏆 PREM Rugby Cup" or " - 🏆 Something"
-  t = t.replace(/\s*\|\s*.*$/i, "");         // drop everything after " | "
-  t = t.replace(/\s*-\s*🏆.*$/i, "");         // drop " - 🏆 …"
-  t = t.replace(/\s*-\s*(?:PREM.*|URC.*)$/i, ""); // drop " - PREM..." etc
-
-  // Squash duplicate spaces and trim
-  t = t.replace(/\s{2,}/g, " ").trim();
+// Regex to trim prefixes + emojis like 🇫🇷 etc.
+t = t
+  .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "") // 🏴 remove flags
+  .replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "") // remove prefix
+  .trim();
 
   return t;
 }

@@ -148,17 +148,27 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
   for (const result of allResults) {
     const normA = normalizeTeamName(result.teamA);
     const normB = normalizeTeamName(result.teamB);
-
+  
     const match = matches.find((m) => {
       const localA = normalizeTeamName(m.teamA);
       const localB = normalizeTeamName(m.teamB);
-
-      return (
+  
+      const isTeamMatch =
         (normA === localA && normB === localB) ||
-        (normA === localB && normB === localA)
-      );
+        (normA === localB && normB === localA);
+  
+      if (!isTeamMatch) return false;
+  
+      // ✅ Check kickoff proximity (±3 days)
+      if (!m.kickoff || !result.date) return false;
+  
+      const kickoff = new Date(m.kickoff);
+      const resultDate = new Date(result.date);
+      const diffDays = Math.abs((kickoff - resultDate) / (1000 * 60 * 60 * 24));
+  
+      return diffDays <= 3;
     });
-
+  
     if (match) {
       match.result = {
         winner: normalizeTeamName(result.winner),
@@ -167,10 +177,10 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
       console.log(`✅ Updated match: ${normA} vs ${normB} → ${result.scoreA}-${result.scoreB}`);
       updates++;
     } else {
-      console.warn(`⚠️ No match found for: ${normA} vs ${normB}`);
+      console.warn(`⚠️ No kickoff match for: ${normA} vs ${normB} (BBC: ${result.date})`);
     }
   }
-
+  
   await writeJSON("matches.json", matches);
   console.log(`📈 Total match results updated: ${updates}`);
 
