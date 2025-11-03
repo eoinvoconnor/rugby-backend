@@ -202,31 +202,10 @@ async function refreshCompetitionById(id) {
   });
 
   const parsed = ical.parseICS(response.data);
-  const newMatches = Object.values(parsed)
-    .filter((e) => e.type === "VEVENT")
-    .map((event) => {
-      // --- Clean up the summary text ---
-      console.log(`🧾 Raw summary for ${comp.name}:`, JSON.stringify(event.summary));
-      let rawSummary = event.summary || "";
-      rawSummary = rawSummary
-        .replace(/🏉/g, "")          // remove rugby ball emoji
-        .replace(/^URC:\s*/i, "")    // remove "URC:" prefix (case-insensitive)
-        .trim();
-    
-      // Split into team names
-      const [teamA, teamB] = rawSummary.split(" vs ").map((t) => t?.trim() || "TBD");
-    
-      return {
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        competitionId: comp.id,
-        competitionName: comp.name,
-        competitionColor: comp.color,
-        teamA,
-        teamB,
-        kickoff: event.start,
-        result: { winner: null, margin: null },
-      };
-    });
+  import { importMatchesFromICS } from "./utils/competitionUtils.js";
+
+  // ... inside refreshCompetitionById()
+  const newMatches = parseIcsToMatches(response.data, comp);
 
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
