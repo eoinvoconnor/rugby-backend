@@ -145,42 +145,45 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
 
   let updates = 0;
 
-  for (const result of allResults) {
-    const normA = normalizeTeamName(result.teamA);
-    const normB = normalizeTeamName(result.teamB);
+  for (const match of matches) {
+    if (!match.kickoff) continue;
   
-    const match = matches.find((m) => {
-      const localA = normalizeTeamName(m.teamA);
-      const localB = normalizeTeamName(m.teamB);
+    const matchDate = new Date(match.kickoff);
+    const localA = normalizeTeamName(match.teamA);
+    const localB = normalizeTeamName(match.teamB);
+  
+    const scrapedResult = allResults.find((result) => {
+      const normA = normalizeTeamName(result.teamA);
+      const normB = normalizeTeamName(result.teamB);
   
       const isTeamMatch =
         (normA === localA && normB === localB) ||
         (normA === localB && normB === localA);
   
-      if (!isTeamMatch) return false;
+      if (!isTeamMatch || !result.date) return false;
   
-      // ✅ Check kickoff proximity (±3 days)
-      if (!m.kickoff || !result.date) return false;
-  
-      const kickoff = new Date(m.kickoff);
       const resultDate = new Date(result.date);
-      const diffDays = Math.abs((kickoff - resultDate) / (1000 * 60 * 60 * 24));
+      const diffDays = Math.abs((matchDate - resultDate) / (1000 * 60 * 60 * 24));
   
       return diffDays <= 3;
     });
   
-    if (match) {
+    if (scrapedResult) {
       match.result = {
-        winner: normalizeTeamName(result.winner),
-        margin: result.margin,
+        winner: normalizeTeamName(scrapedResult.winner),
+        margin: scrapedResult.margin,
       };
-      console.log(`✅ Updated match: ${normA} vs ${normB} → ${result.scoreA}-${result.scoreB}`);
+      console.log(
+        `✅ Updated match: ${match.teamA} vs ${match.teamB} → ${scrapedResult.scoreA}-${scrapedResult.scoreB}`
+      );
       updates++;
     } else {
-      console.warn(`⚠️ No kickoff match for: ${normA} vs ${normB} (BBC: ${result.date})`);
+      console.warn(
+        `⚠️ No matching result for: ${match.teamA} vs ${match.teamB} (${match.kickoff})`
+      );
     }
   }
-  
+    
   await writeJSON("matches.json", matches);
   console.log(`📈 Total match results updated: ${updates}`);
 
