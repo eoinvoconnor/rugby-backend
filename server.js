@@ -195,13 +195,8 @@ function parseIcsToMatches(icsText, comp) {
     const summary = (ev.summary || "").trim();
 
     // Try split on " vs " or " v "
-    let teamA = null, teamB = null;
-    if (summary.includes(" vs ")) {
-      [teamA, teamB] = summary.split(" vs ").map(s => s.trim());
-    } else if (summary.includes(" v ")) {
-      [teamA, teamB] = summary.split(" v ").map(s => s.trim());
-    }
-
+    const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name || "");
+    
     if (!kickoff || !teamA || !teamB) continue;
 
     out.push({
