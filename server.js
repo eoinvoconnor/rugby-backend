@@ -188,6 +188,7 @@ function splitTeamsFromSummary(summary, compName = "") {
 function parseIcsToMatches(icsText, comp) {
   const events = ical.sync.parseICS(icsText);
   const out = [];
+
   for (const k of Object.keys(events)) {
     const ev = events[k];
     if (!ev || ev.type !== "VEVENT") continue;
@@ -195,24 +196,23 @@ function parseIcsToMatches(icsText, comp) {
     const kickoff = ev.start ? new Date(ev.start) : null;
     const summary = (ev.summary || "").trim();
 
-    // Try split on " vs " or " v "
-    const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name || "");
+    const [rawA, rawB] = splitTeamsFromSummary(summary, comp.name || "");
+    const teamA = cleanTeamText(rawA, comp.name);
+    const teamB = cleanTeamText(rawB, comp.name);
 
-    if (!kickoff || !teamA || !teamB) continue;
+    if (!kickoff || !teamA || !teamB || teamA === "TBD" || teamB === "TBD") continue;
 
-teamA = cleanTeamText(teamA, comp.name);
-teamB = cleanTeamText(teamB, comp.name);
-
-out.push({
-  competitionId: comp.id,
-  competitionName: comp.name,
-  competitionColor: comp.color || "#888888",
-  teamA,
-  teamB,
-  kickoff: kickoff.toISOString(),
-  result: { winner: null, margin: null },
-});
+    out.push({
+      competitionId: comp.id,
+      competitionName: comp.name,
+      competitionColor: comp.color || "#888888",
+      teamA,
+      teamB,
+      kickoff: kickoff.toISOString(),
+      result: { winner: null, margin: null },
+    });
   }
+
   return out;
 }
 
