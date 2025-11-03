@@ -21,6 +21,42 @@ export function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+// --- Helpers for cleaning feed titles ---
+function cleanTeamText(text, compName = "") {
+  if (!text) return "";
+
+  let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
+  t = t.replace(/[🏉🏆]/g, "");
+  t = t.replace(/\p{Extended_Pictographic}/gu, ""); // all emojis
+
+  const prefixes = [
+    compName,
+    "URC", "PREM", "Premiership", "English Prem Rugby Cup", "Gallagher Premiership",
+    "Quilter Autumn Series", "Quilter Nations Series", "Top 14", "International",
+    "Challenge Cup", "Champions Cup"
+  ]
+    .filter(Boolean)
+    .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+
+  t = t
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "") // remove flags
+    .replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "")
+    .trim();
+
+  return t;
+}
+
+function splitTeamsFromSummary(summary, compName = "") {
+  const s = String(summary || "");
+  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i);
+  if (!rawA || !rawB) {
+    const cleaned = cleanTeamText(s, compName);
+    return [cleaned, "TBD"];
+  }
+  return [cleanTeamText(rawA, compName), cleanTeamText(rawB, compName)];
+}
+
 /**
  * Normalize feed URLs for calendar imports
  */
@@ -53,13 +89,14 @@ export async function importMatchesFromICS(comp) {
   for (let key in events) {
     const ev = events[key];
     if (ev.type !== "VEVENT") continue;
-    const summary = (ev.summary || "").trim();
-    if (!summary.includes("vs")) continue;
 
-    let [teamA, teamB] = summary.replace("🏉", "").split(" vs ").map(s => s.trim());
+    const summary = (ev.summary || "").trim();
+    if (!summary.includes("vs") && !summary.includes(" v ")) continue;
+
+    const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
     const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
 
-    if (teamA.toLowerCase() === "tbc" && teamB.toLowerCase() === "tbc") continue;
+    if (!teamA || !teamB || teamA.toLowerCase() === "tbc" && teamB.toLowerCase() === "tbc") continue;
 
     const existing = matches.find(m =>
       m.competition === comp.name &&
@@ -83,60 +120,6 @@ export async function importMatchesFromICS(comp) {
       added++;
     }
   }
-
-// --- Helpers for cleaning feed titles (eCal / ICS) ---
-function cleanTeamText(text, compName = "") {
-  if (!text) return "";
-
-  // Normalize spaces
-  let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
-
-  // Remove common emojis/icons that appear in summaries
-  t = t.replace(/[🏉🏆]/g, "");
-  t = t.replace(/\p{Extended_Pictographic}/gu, ""); // remove all emoji characters
-
-  // Remove competition prefixes and flag emojis
-const prefixes = [
-  compName,
-  "URC",
-  "PREM",
-  "Premiership",
-  "English Prem Rugby Cup",
-  "Gallagher Premiership",
-  "Quilter Autumn Series",
-  "Quilter Nations Series",
-  "Top 14",
-  "International",
-  "Challenge Cup",
-  "Champions Cup"
-]
-  .filter(Boolean)
-  .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape for regex
-  .join("|");
-
-// Regex to trim prefixes + emojis like 🇫🇷 etc.
-t = t
-  .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "") // 🏴 remove flags
-  .replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "") // remove prefix
-  .trim();
-
-  return t;
-}
-
-// Split a summary into [teamA, teamB] using common separators
-function splitTeamsFromSummary(summary, compName = "") {
-  const s = String(summary || "");
-  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i); // "vs", "vs.", or "v"
-  if (!rawA || !rawB) {
-    // Fallback: no split; return as-is
-    const cleaned = cleanTeamText(s, compName);
-    return [cleaned, "TBD"];
-  }
-  return [
-    cleanTeamText(rawA, compName),
-    cleanTeamText(rawB, compName),
-  ];
-}
 
   saveJSON(matchesFile, matches);
   return { added, updated };
