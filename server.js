@@ -12,6 +12,8 @@ import ical from "node-ical";
 import { fileURLToPath } from "url";
 import calculatePoints from "./utils/scoring.js";
 import { refreshCompetitions } from "./utils/competitionUpdater.js"; // adjust path if needed
+import { importMatchesFromICS } from "./utils/competitionUtils.js";
+
 
 // __dirname shim for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -202,7 +204,7 @@ async function refreshCompetitionById(id) {
   });
 
   const parsed = ical.parseICS(response.data);
-  import { importMatchesFromICS } from "./utils/competitionUtils.js";
+  const result = await importMatchesFromICS(comp);
 
   // ... inside refreshCompetitionById()
   const newMatches = parseIcsToMatches(response.data, comp);
