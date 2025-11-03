@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 console.log("🧪 resultsUpdater.js loaded");
 
-const DATA_DIR = process.env.DATA_DIR || "/var/data";
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "../data"); // ✅ FIXED HERE
 const SCRAPE_DIR = path.join(__dirname, "../scrape");
 
 // --- Helpers ---
@@ -58,7 +58,6 @@ async function fetchBBCResultsForDate(dateISO) {
     const html = res.data || "";
     console.log(`📄 HTML fetched (${html.length} chars)`);
 
-    // Save raw HTML for inspection
     const filePath = path.join(SCRAPE_DIR, `bbc-${dateISO}.html`);
     fs.writeFileSync(filePath, html, "utf8");
     console.log(`💾 Saved HTML to ${filePath}`);
@@ -93,6 +92,7 @@ async function fetchBBCResultsForDate(dateISO) {
         scoreB,
         winner,
         margin,
+        date: dateISO, // ✅ Needed for ±3 day check
       });
     });
 
@@ -147,27 +147,27 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
 
   for (const match of matches) {
     if (!match.kickoff) continue;
-  
+
     const matchDate = new Date(match.kickoff);
     const localA = normalizeTeamName(match.teamA);
     const localB = normalizeTeamName(match.teamB);
-  
+
     const scrapedResult = allResults.find((result) => {
       const normA = normalizeTeamName(result.teamA);
       const normB = normalizeTeamName(result.teamB);
-  
+
       const isTeamMatch =
         (normA === localA && normB === localB) ||
         (normA === localB && normB === localA);
-  
+
       if (!isTeamMatch || !result.date) return false;
-  
+
       const resultDate = new Date(result.date);
       const diffDays = Math.abs((matchDate - resultDate) / (1000 * 60 * 60 * 24));
-  
+
       return diffDays <= 3;
     });
-  
+
     if (scrapedResult) {
       match.result = {
         winner: normalizeTeamName(scrapedResult.winner),
@@ -183,8 +183,8 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
       );
     }
   }
-    
-  await writeJSON("matches.json", matches);
+
+  await writeJSON("matches.json", matches); // ✅ writes to correct file now
   console.log(`📈 Total match results updated: ${updates}`);
 
   return updates;
