@@ -690,37 +690,18 @@ app.post(
   requireAdmin,
   async (req, res) => {
     try {
-      // Load competition
-      const competitions = await readJSON("competitions.json");
       const compId = Number(req.params.id);
-      const comp = competitions.find((c) => c.id === compId);
-      if (!comp) return res.status(404).json({ error: "Competition not found" });
+      if (!compId) {
+        return res.status(400).json({ error: "Invalid competition ID" });
+      }
 
-      // Fetch ICS
-      const normalizedUrl = normalizeUrl(comp.url);
-      console.log(`🔄 Refreshing competition: ${comp.name}`);
-      const response = await axios.get(normalizedUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (rugby-app)",
-          Accept: "text/calendar",
-        },
-        responseType: "text",
-      });
-      const icsText = response.data;
+      console.log(`🔄 Refreshing competition ID: ${compId}`);
 
-      const added = await importMatchesFromICS(icsText, comp);
-      console.log(`✅ Imported ${added} matches from ${comp.name}`);
-
-      // Bump lastRefreshed on competitions
-      const latestComps = await readJSON("competitions.json");
-      const bumped = latestComps.map((c) =>
-        c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
-      );
-      await writeJSON("competitions.json", bumped);
+      const result = await refreshCompetitionById(compId);
 
       return res.json({
-        message: `Updated ${added} matches for ${comp.name}`,
-        added,
+        message: `✅ Refreshed competition ${compId}`,
+        ...result, // contains { added: n }
       });
     } catch (err) {
       console.error("❌ Refresh failed:", err);
