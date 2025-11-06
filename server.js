@@ -687,22 +687,17 @@ app.post(
       // Fetch ICS
       const normalizedUrl = normalizeUrl(comp.url);
       console.log(`🔄 Refreshing competition: ${comp.name}`);
-      const { data: icsText } = await axios.get(normalizedUrl, {
+      const response = await axios.get(normalizedUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (rugby-app)",
           Accept: "text/calendar",
         },
         responseType: "text",
       });
+      const icsText = response.data;
 
-      // ✅ Use the centralised ICS import logic
-      const parsedMatches = await importMatchesFromICS(comp);
-
-      // Replace old matches for this competition
-      const allMatches = await readJSON("matches.json"); // <- DO NOT call this variable "matches"
-      const kept = allMatches.filter((m) => m.competitionId !== comp.id);
-      const updatedMatches = [...kept, ...parsedMatches];
-      await writeJSON("matches.json", updatedMatches);
+      const added = await importMatchesFromICS(icsText, comp);
+      console.log(`✅ Imported ${added} matches from ${comp.name}`);
 
       // Bump lastRefreshed on competitions
       const latestComps = await readJSON("competitions.json");
@@ -711,10 +706,9 @@ app.post(
       );
       await writeJSON("competitions.json", bumped);
 
-      console.log(`✅ Updated ${parsedMatches.length} matches for ${comp.name}`);
       return res.json({
-        message: `Updated ${parsedMatches.length} matches for ${comp.name}`,
-        added: parsedMatches.length,
+        message: `Updated ${added} matches for ${comp.name}`,
+        added,
       });
     } catch (err) {
       console.error("❌ Refresh failed:", err);
