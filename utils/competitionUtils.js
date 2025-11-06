@@ -73,15 +73,10 @@ function normalizeUrl(url) {
  * Import matches from ICS feed
  */
 export async function importMatchesFromICS(comp) {
-  const url = normalizeUrl(comp.url);
-  const res = await axios.get(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Rugby Predictor/1.0)",
-      "Accept": "text/calendar, */*;q=0.9",
-    },
-    timeout: 15000,
-  });
-  const events = ical.parseICS(res.data);
+// We now receive pre-fetched ICS text directly
+if (!icsText || typeof icsText !== "string") {
+  throw new Error(`No ICS text provided for competition "${comp.name}"`);
+}
 
   let matches = loadJSON(matchesFile);
   let added = 0, updated = 0;
