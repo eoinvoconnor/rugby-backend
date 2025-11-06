@@ -19,6 +19,7 @@ export function loadJSON(file) {
 
 export function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  console.log(`💾 Saved ${matches.length} matches to disk`);
 }
 
 // --- Helpers for cleaning feed titles ---
@@ -118,6 +119,7 @@ export async function importMatchesFromICS(icsText, comp) {
     // ✅ Clean here
     const cleanA = cleanTeamText(teamA, comp.name);
     const cleanB = cleanTeamText(teamB, comp.name);
+    console.log("🧼 Cleaned:", cleanA, "|", cleanB);
     
     if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
     

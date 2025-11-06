@@ -223,6 +223,8 @@ async function refreshCompetitionById(id) {
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
   const updatedMatches = [...filtered, ...newMatches];
   await writeJSON("matches.json", updatedMatches);
+  // Log to confirm
+  console.log(`✅ Saved ${newMatches.length} cleaned matches for ${comp.name}`);
 
   // ✅ 6. Bump lastRefreshed timestamp
   const updatedComps = competitions.map((c) =>
