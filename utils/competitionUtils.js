@@ -26,25 +26,39 @@ function cleanTeamText(text, compName = "") {
   if (!text) return "";
 
   let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
-  t = t.replace(/[🏉🏆]/g, "");
-  t = t.replace(/\p{Extended_Pictographic}/gu, ""); // all emojis
 
+  // Remove common emojis/icons and visual junk
+  t = t
+    .replace(/[🏉🏆]/g, "")                        // remove rugby balls and trophies
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")     // remove flag emojis
+    .replace(/�/g, "")                             // remove invalid placeholder chars
+    .replace(/^\s*[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "") // surrogate pairs (some emoji flags)
+
+  // Remove competition or feed prefixes
   const prefixes = [
     compName,
-    "URC", "PREM", "Premiership", "English Prem Rugby Cup", "Gallagher Premiership",
-    "Quilter Autumn Series", "Quilter Nations Series", "Top 14", "International",
-    "Challenge Cup", "Champions Cup"
+    "URC",
+    "PREM",
+    "Premiership",
+    "English Prem Rugby Cup",
+    "Gallagher Premiership",
+    "Quilter Autumn Series",
+    "Quilter Nations Series",
+    "Top 14",
+    "International",
+    "Challenge Cup",
+    "Champions Cup"
   ]
     .filter(Boolean)
-    .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape for regex
     .join("|");
 
-  t = t
-    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "") // remove flags
-    .replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "")
-    .trim();
+  t = t.replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "");
 
-  return t;
+  // Remove any trailing "| 🏆..." parts
+  t = t.replace(/\s*\|\s*🏆.*$/i, "");
+
+  return t.trim();
 }
 
 function splitTeamsFromSummary(summary, compName = "") {
@@ -114,6 +128,10 @@ export async function importMatchesFromICS(icsText, comp) {
       existing.kickoff = kickoff; // refresh time
       updated++;
     } else {
+
+      const cleanA = cleanTeamText(teamA, comp.name);
+      const cleanB = cleanTeamText(teamB, comp.name);
+
       matches.push({
         id: Date.now() + Math.floor(Math.random() * 1000),
         competitionId: comp.id,
