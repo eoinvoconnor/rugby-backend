@@ -72,50 +72,65 @@ function normalizeUrl(url) {
 /**
  * Import matches from ICS feed
  */
-export async function importMatchesFromICS(comp) {
-// We now receive pre-fetched ICS text directly
-if (!icsText || typeof icsText !== "string") {
-  throw new Error(`No ICS text provided for competition "${comp.name}"`);
-}
+// importMatchesFromICS now expects the actual ICS text as the first argument
+export async function importMatchesFromICS(icsText, comp) {
+  if (!icsText || typeof icsText !== "string") {
+    throw new Error(`No ICS text provided for competition "${comp?.name || "unknown"}"`);
+  }
+  if (!comp?.name) throw new Error("Competition object missing name");
+  if (!comp?.id) throw new Error("Competition object missing id");
 
-  let matches = loadJSON(matchesFile);
-  let added = 0, updated = 0;
+  console.log(`🧩 Parsing ICS feed for ${comp.name}...`);
 
-  for (let key in events) {
+  // --- Parse the ICS text ---
+  const events = ical.parseICS(icsText);
+
+  // --- Load current matches from disk ---
+  const matches = await loadJSON(matchesFile);
+  let added = 0;
+  let updated = 0;
+
+  // --- Iterate through events and build matches ---
+  for (const key in events) {
     const ev = events[key];
-    if (ev.type !== "VEVENT") continue;
+    if (!ev || ev.type !== "VEVENT") continue;
 
     const summary = (ev.summary || "").trim();
-    if (!summary.includes("vs") && !summary.includes(" v ")) continue;
+    if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
 
     const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
     const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
 
-    if (!teamA || !teamB || teamA.toLowerCase() === "tbc" && teamB.toLowerCase() === "tbc") continue;
+    if (!teamA || !teamB || teamA.toLowerCase() === "tbc" || teamB.toLowerCase() === "tbc") continue;
 
+    // --- Check for existing match (same comp + teams ±2 days) ---
     const existing = matches.find(m =>
-      m.competition === comp.name &&
-      m.teamA === teamA &&
-      m.teamB === teamB &&
+      m.competitionId === comp.id &&
+      ((m.teamA === teamA && m.teamB === teamB) || (m.teamA === teamB && m.teamB === teamA)) &&
       Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
     );
 
     if (existing) {
-      existing.kickoff = kickoff;
+      existing.kickoff = kickoff; // refresh time
       updated++;
     } else {
       matches.push({
         id: Date.now() + Math.floor(Math.random() * 1000),
-        competition: comp.name,
+        competitionId: comp.id,
+        competitionName: comp.name,
+        competitionColor: comp.color || "#888888",
         teamA,
         teamB,
         kickoff,
-        result: null,
+        result: { winner: null, margin: null },
       });
       added++;
     }
   }
 
-  saveJSON(matchesFile, matches);
+  // --- Write back to disk ---
+  await saveJSON(matchesFile, matches);
+
+  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
   return { added, updated };
 }
