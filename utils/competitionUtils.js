@@ -100,31 +100,46 @@ export async function importMatchesFromICS(icsText, comp) {
   // --- Parse the ICS text ---
   const events = ical.parseICS(icsText);
 
-  // --- Load current matches from disk ---
-  const matches = await loadJSON(matchesFile);
-  let added = 0;
-  let updated = 0;
+// --- Load current matches from disk ---
+const allMatches = await loadJSON(matchesFile);
 
-  // --- Iterate through events and build matches ---
-  for (const key in events) {
-    const ev = events[key];
-    if (!ev || ev.type !== "VEVENT") continue;
+// --- Remove old matches from this competition ---
+const existing = allMatches.filter((m) => m.competitionId !== comp.id);
+const updated = [];
+let added = 0;
 
-    const summary = (ev.summary || "").trim();
-    if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
+// --- Iterate through events and build matches ---
+for (const key in events) {
+  const ev = events[key];
+  if (!ev || ev.type !== "VEVENT") continue;
 
-    const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
-    const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
-    
-    // ✅ Clean here
-    const cleanA = cleanTeamText(teamA, comp.name);
-    const cleanB = cleanTeamText(teamB, comp.name);
-    console.log("🧼 Cleaned:", cleanA, "|", cleanB);
-    
-    if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
-    
-    // ✅ Then use cleanA / cleanB below
-    matches.push({
+  const summary = (ev.summary || "").trim();
+  if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
+
+  const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
+  const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
+
+  // ✅ Clean here
+  const cleanA = cleanTeamText(teamA, comp.name);
+  const cleanB = cleanTeamText(teamB, comp.name);
+  console.log("🧼 Cleaned:", cleanA, "|", cleanB);
+
+  if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
+
+  // Check for a near-duplicate (same teams, same comp, kickoff within ±48h)
+  const nearMatch = allMatches.find(m =>
+    m.competitionId === comp.id &&
+    [m.teamA, m.teamB].sort().join() === [cleanA, cleanB].sort().join() &&
+    Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
+  );
+
+  if (nearMatch) {
+    // Update kickoff if needed
+    nearMatch.kickoff = kickoff;
+    updated.push(nearMatch);
+  } else {
+    // New match
+    updated.push({
       id: Date.now() + Math.floor(Math.random() * 1000),
       competitionId: comp.id,
       competitionName: comp.name,
@@ -136,10 +151,11 @@ export async function importMatchesFromICS(icsText, comp) {
     });
     added++;
   }
-
-  // --- Write back to disk ---
-  await saveJSON(matchesFile, matches);
-
-  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
-  return matches;  // ✅ return the full array, not an object
 }
+
+// --- Write back to disk ---
+const finalMatches = [...existing, ...updated];
+await saveJSON(matchesFile, finalMatches);
+
+console.log(`✅ ${added} new, ${updated.length - added} updated for ${comp.name}`);
+return finalMatches;
