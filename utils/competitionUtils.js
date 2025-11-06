@@ -26,7 +26,8 @@ export function saveJSON(file, data) {
 export function cleanTeamText(text, compName = "") {
   if (!text) return "";
 
-  let t = String(text).replace(/\u00A0/g, " "); // Replace non-breaking space
+  let original = String(text);
+  let t = original.replace(/\u00A0/g, " "); // Replace non-breaking space
 
   // 🔥 Stronger strip logic
   t = t
@@ -35,7 +36,7 @@ export function cleanTeamText(text, compName = "") {
     .replace(/\\u[dD][89A-F][0-9A-F]/g, "")      // Unicode surrogate pairs (e.g., \uddeb)
     .replace(/[\uD800-\uDFFF]/g, "")             // High/low surrogate characters
     .replace(/[🏉🏆]/g, "")                       // Common emojis
-    .replace(/\|\s*.*?(PREM|CUP|TROPHY).*$/i, "") // Match things like | 🏆 PREM Rugby Cup
+    .replace(/\|\s*.*?(PREM|CUP|TROPHY).*$/i, "") // Suffix like "| 🏆 PREM Rugby Cup"
     .replace(/[–—−]/g, "-")                      // Normalize dashes
     .replace(/\s{2,}/g, " ")                     // Collapse double spaces
     .trim();
@@ -61,6 +62,11 @@ export function cleanTeamText(text, compName = "") {
 
   const prefixRegex = new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i");
   t = t.replace(prefixRegex, "").trim();
+
+  // 🧪 Debug line
+  if (original !== t) {
+    console.log(`🧪 cleanTeamText(): "${original}" ➞ "${t}"`);
+  }
 
   return t;
 }
