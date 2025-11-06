@@ -193,6 +193,12 @@ async function refreshCompetitionById(id) {
   const comp = competitions.find((c) => c.id === Number(id));
   if (!comp) throw new Error("Competition not found");
 
+  // ✅ 1. Validate comp.url BEFORE using it
+  if (!comp.url || typeof comp.url !== "string" || !comp.url.startsWith("http")) {
+    throw new Error(`Invalid or missing URL for competition "${comp.name}"`);
+  }
+
+  // ✅ 2. Fetch ICS feed
   const normalizedUrl = normalizeUrl(comp.url);
   const response = await axios.get(normalizedUrl, {
     headers: {
@@ -203,22 +209,31 @@ async function refreshCompetitionById(id) {
     timeout: 20000,
   });
 
+  // ✅ 3. Validate response
   const icsText = response.data;
+  if (!icsText || typeof icsText !== "string") {
+    throw new Error(`Empty or invalid ICS response for competition "${comp.name}"`);
+  }
+
+  // ✅ 4. Parse + clean matches using your util
   const newMatches = await importMatchesFromICS(icsText, comp);
 
+  // ✅ 5. Replace matches for this competition
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
   const updatedMatches = [...filtered, ...newMatches];
   await writeJSON("matches.json", updatedMatches);
 
-  // bump lastRefreshed on this comp
+  // ✅ 6. Bump lastRefreshed timestamp
   const updatedComps = competitions.map((c) =>
     c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
   );
   await writeJSON("competitions.json", updatedComps);
 
+  // ✅ 7. Return a summary
   return { added: newMatches.length };
 }
+
 // ----- SUPERADMIN GUARD -----
 // ---- Admin guards ----
 const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || "eoinvoconnor@gmail.com";
