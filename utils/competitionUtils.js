@@ -159,3 +159,4 @@ await saveJSON(matchesFile, finalMatches);
 
 console.log(`✅ ${added} new, ${updated.length - added} updated for ${comp.name}`);
 return finalMatches;
+}
