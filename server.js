@@ -185,7 +185,7 @@ async function upsertMatchesForCompetition(comp, newMatches) {
   }
 
   await writeJSON("matches.json", matches);
-  return matches.length;
+  return added;
 }
 
 async function refreshCompetitionById(id) {
