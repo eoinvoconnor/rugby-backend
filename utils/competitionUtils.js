@@ -22,25 +22,25 @@ export function saveJSON(file, data) {
 }
 
 // --- Helpers for cleaning feed titles ---
-function cleanTeamText(text, compName = "") {
+export function cleanTeamText(text, compName = "") {
   if (!text) return "";
 
-  let t = String(text).replace(/\u00A0/g, " "); // NBSP → space
+  let t = String(text).replace(/\u00A0/g, " "); // Replace non-breaking space
 
-  // Remove common emojis/icons and visual junk
+  // Remove common emojis and broken flag characters
   t = t
-    .replace(/[🏉🏆]/g, "")                        // remove rugby balls and trophies
-    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")     // remove flag emojis
-    .replace(/�/g, "")                             // remove invalid placeholder chars
-    .replace(/^\s*[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "") // surrogate pairs (some emoji flags)
+    .replace(/[🏉🏆]/g, "")                           // rugby ball, trophy
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")        // flags like 🇫🇷
+    .replace(/�/g, "")                                // unknown character
+    .replace(/\|\s*🏆.*$/i, "")                       // suffix like | 🏆 PREM Rugby Cup
+    .trim();
 
-  // Remove competition or feed prefixes
+  // Strip known competition prefixes
   const prefixes = [
     compName,
     "URC",
     "PREM",
     "Premiership",
-    "English Prem Rugby Cup",
     "Gallagher Premiership",
     "Quilter Autumn Series",
     "Quilter Nations Series",
@@ -50,15 +50,13 @@ function cleanTeamText(text, compName = "") {
     "Champions Cup"
   ]
     .filter(Boolean)
-    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape for regex
+    .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape regex
     .join("|");
 
-  t = t.replace(new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i"), "");
+  const prefixRegex = new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i");
+  t = t.replace(prefixRegex, "").trim();
 
-  // Remove any trailing "| 🏆..." parts
-  t = t.replace(/\s*\|\s*🏆.*$/i, "");
-
-  return t.trim();
+  return t;
 }
 
 function splitTeamsFromSummary(summary, compName = "") {
