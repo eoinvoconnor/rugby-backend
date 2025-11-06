@@ -159,10 +159,9 @@ for (const key in events) {
   }
 }
 
-// --- Write back to disk ---
-const finalMatches = [...existing, ...updated];
-await saveJSON(matchesFile, finalMatches);
+  // --- Write back to disk ---
+  await saveJSON(matchesFile, matches);
 
-console.log(`✅ ${added} new, ${updated.length - added} updated for ${comp.name}`);
-return finalMatches;
+  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
+  return matches;  // ✅ return the array
 }
