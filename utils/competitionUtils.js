@@ -128,9 +128,9 @@ export async function importMatchesFromICS(icsText, comp) {
     }
   }
 
-  // --- Write back to disk ---
-  await saveJSON(matchesFile, matches);
+// --- Write back to disk ---
+await saveJSON(matchesFile, matches);
 
-  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
-  return { added, updated };
+console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
+return matches;  // ✅ return the full array, not an object
 }
