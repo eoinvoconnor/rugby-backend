@@ -27,12 +27,16 @@ export function cleanTeamText(text, compName = "") {
 
   let t = String(text).replace(/\u00A0/g, " "); // Replace non-breaking space
 
-  // Remove common emojis and broken flag characters
+  // 🔥 Stronger strip logic
   t = t
-    .replace(/[🏉🏆]/g, "")                           // rugby ball, trophy
-    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")        // flags like 🇫🇷
-    .replace(/�/g, "")                                // unknown character
-    .replace(/\|\s*🏆.*$/i, "")                       // suffix like | 🏆 PREM Rugby Cup
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")   // Flag emojis
+    .replace(/[�]/g, "")                         // Black diamond fallback
+    .replace(/\\u[dD][89A-F][0-9A-F]/g, "")      // Unicode surrogate pairs (e.g., \uddeb)
+    .replace(/[\uD800-\uDFFF]/g, "")             // High/low surrogate characters
+    .replace(/[🏉🏆]/g, "")                       // Common emojis
+    .replace(/\|\s*.*?(PREM|CUP|TROPHY).*$/i, "") // Match things like | 🏆 PREM Rugby Cup
+    .replace(/[–—−]/g, "-")                      // Normalize dashes
+    .replace(/\s{2,}/g, " ")                     // Collapse double spaces
     .trim();
 
   // Strip known competition prefixes
@@ -47,10 +51,11 @@ export function cleanTeamText(text, compName = "") {
     "Top 14",
     "International",
     "Challenge Cup",
-    "Champions Cup"
+    "Champions Cup",
+    "Rugby World Cup"
   ]
     .filter(Boolean)
-    .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) // escape regex
+    .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
 
   const prefixRegex = new RegExp(`^\\s*(?:${prefixes})\\s*:?\\s*`, "i");
