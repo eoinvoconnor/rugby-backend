@@ -695,39 +695,8 @@ app.post(
         responseType: "text",
       });
 
-      // Parse ICS → matches
-      const parsed = ical.parseICS(icsText);
-      const vsRegex = /(.+?)\s+v(?:s\.?)?\s+(.+)/i;
-
-      const parsedMatches = Object.values(parsed)
-        .filter((e) => e && e.type === "VEVENT" && e.summary && e.start)
-        .map((evt) => {
-          const summary = String(evt.summary);
-          const m = summary.match(vsRegex);
-          let teamA = "TBD";
-          let teamB = "TBD";
-          if (m) {
-            teamA = cleanTeamName(m[1]);
-            teamB = cleanTeamName(m[2]);
-          }
-
-          const kickoffISO =
-            evt.start instanceof Date
-              ? evt.start.toISOString()
-              : new Date(evt.start).toISOString();
-
-          return {
-            id: Date.now() + Math.floor(Math.random() * 1_000_000),
-            competitionId: comp.id,
-            competitionName: comp.name,
-            competitionColor: comp.color || "#888",
-            teamA,
-            teamB,
-            kickoff: kickoffISO,
-            result: { winner: null, margin: null },
-          };
-        })
-        .filter((m) => m.kickoff); // guard
+      // ✅ Use the centralised ICS import logic
+      const parsedMatches = await importMatchesFromICS(comp);
 
       // Replace old matches for this competition
       const allMatches = await readJSON("matches.json"); // <- DO NOT call this variable "matches"
