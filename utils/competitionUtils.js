@@ -59,20 +59,18 @@ export function cleanTeamText(text, compName = "") {
   return t;
 }
 
-function splitTeamsFromSummary(summary, compName = "") {
+export function splitTeamsFromSummary(summary, compName = "") {
   const s = String(summary || "");
-  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i);
-  if (!rawA || !rawB) {
-    const cleaned = cleanTeamText(s, compName);
-    return [cleaned, "TBD"];
-  }
-  return [cleanTeamText(rawA, compName), cleanTeamText(rawB, compName)];
+  const [rawA, rawB] = s.split(/\s+vs\.?\s+|\s+v\s+/i); // "vs", "vs.", or "v"
+
+  if (!rawA || !rawB) return ["TBD", "TBD"];
+  return [rawA.trim(), rawB.trim()];
 }
 
 /**
  * Normalize feed URLs for calendar imports
  */
-function normalizeUrl(url) {
+export function normalizeUrl(url) {
   if (!url) return "";
   let normalized = url.trim();
   if (normalized.startsWith("webcal://")) {
@@ -84,7 +82,6 @@ function normalizeUrl(url) {
 /**
  * Import matches from ICS feed
  */
-// importMatchesFromICS now expects the actual ICS text as the first argument
 export async function importMatchesFromICS(icsText, comp) {
   if (!icsText || typeof icsText !== "string") {
     throw new Error(`No ICS text provided for competition "${comp?.name || "unknown"}"`);
@@ -112,41 +109,30 @@ export async function importMatchesFromICS(icsText, comp) {
 
     const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
     const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
-
-    if (!teamA || !teamB || teamA.toLowerCase() === "tbc" || teamB.toLowerCase() === "tbc") continue;
-
-    // --- Check for existing match (same comp + teams ±2 days) ---
-    const existing = matches.find(m =>
-      m.competitionId === comp.id &&
-      ((m.teamA === teamA && m.teamB === teamB) || (m.teamA === teamB && m.teamB === teamA)) &&
-      Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
-    );
-
-    if (existing) {
-      existing.kickoff = kickoff; // refresh time
-      updated++;
-    } else {
-
-      const cleanA = cleanTeamText(teamA, comp.name);
-      const cleanB = cleanTeamText(teamB, comp.name);
-
-      matches.push({
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        competitionId: comp.id,
-        competitionName: comp.name,
-        competitionColor: comp.color || "#888888",
-        teamA,
-        teamB,
-        kickoff,
-        result: { winner: null, margin: null },
-      });
-      added++;
-    }
+    
+    // ✅ Clean here
+    const cleanA = cleanTeamText(teamA, comp.name);
+    const cleanB = cleanTeamText(teamB, comp.name);
+    
+    if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
+    
+    // ✅ Then use cleanA / cleanB below
+    matches.push({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      competitionId: comp.id,
+      competitionName: comp.name,
+      competitionColor: comp.color || "#888",
+      teamA: cleanA,
+      teamB: cleanB,
+      kickoff,
+      result: { winner: null, margin: null },
+    });
+    added++;
   }
 
-// --- Write back to disk ---
-await saveJSON(matchesFile, matches);
+  // --- Write back to disk ---
+  await saveJSON(matchesFile, matches);
 
-console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
-return matches;  // ✅ return the full array, not an object
+  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
+  return matches;  // ✅ return the full array, not an object
 }
