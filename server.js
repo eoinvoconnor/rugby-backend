@@ -203,11 +203,8 @@ async function refreshCompetitionById(id) {
     timeout: 20000,
   });
 
-  const parsed = ical.parseICS(response.data);
-  const result = await importMatchesFromICS(comp);
-
-  // ... inside refreshCompetitionById()
-  const newMatches = parseIcsToMatches(response.data, comp);
+  const icsText = response.data;
+  const newMatches = await importMatchesFromICS(icsText, comp);
 
   const matches = await readJSON("matches.json");
   const filtered = matches.filter((m) => m.competitionId !== comp.id);
