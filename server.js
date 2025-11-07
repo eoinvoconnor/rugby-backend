@@ -215,25 +215,24 @@ async function refreshCompetitionById(id) {
     throw new Error(`Empty or invalid ICS response for competition "${comp.name}"`);
   }
 
-  // ✅ 4. Parse + clean matches using your util
-  const newMatches = await importMatchesFromICS(icsText, comp);
+// ✅ 4. Parse + clean matches using your util
+const { finalMatches, added, updated } = await importMatchesFromICS(icsText, comp);
 
-  // ✅ 5. Replace matches for this competition
-  const matches = await readJSON("matches.json");
-  const filtered = matches.filter((m) => m.competitionId !== comp.id);
-  const updatedMatches = [...filtered, ...newMatches];
-  await writeJSON("matches.json", updatedMatches);
-  // Log to confirm
-  console.log(`✅ Saved ${newMatches.length} cleaned matches for ${comp.name}`);
+// ✅ 5. Replace matches for this competition
+await writeJSON("matches.json", finalMatches);
 
-  // ✅ 6. Bump lastRefreshed timestamp
-  const updatedComps = competitions.map((c) =>
-    c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
-  );
-  await writeJSON("competitions.json", updatedComps);
+// Log for debug visibility
+console.log(`✅ Saved ${finalMatches.length} matches for ${comp.name}`);
+console.log(`ℹ️ ${added} added, ${updated} updated`);
 
-  // ✅ 7. Return a summary
-  return { added: newMatches.length };
+// ✅ 6. Bump lastRefreshed timestamp
+const updatedComps = competitions.map((c) =>
+  c.id === comp.id ? { ...c, lastRefreshed: new Date().toISOString() } : c
+);
+await writeJSON("competitions.json", updatedComps);
+
+// ✅ 7. Return a summary
+return { added, updated, total: finalMatches.length };
 }
 
 // ----- SUPERADMIN GUARD -----

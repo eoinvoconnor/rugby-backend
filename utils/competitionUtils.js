@@ -177,5 +177,9 @@ export async function importMatchesFromICS(icsText, comp) {
   await saveJSON(matchesFile, finalMatches);
   
   console.log(`✅ ${added} new, ${updated.length - added} updated for ${comp.name}`);
-  return finalMatches;
+  return {
+    finalMatches,
+    added,
+    updated: updated.length - added
+  };
 }
