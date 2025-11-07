@@ -133,7 +133,9 @@ export async function importMatchesFromICS(icsText, comp) {
     if (
       !cleanA || !cleanB ||
       cleanA.toLowerCase() === "tbd" ||
-      cleanB.toLowerCase() === "tbd"
+      cleanB.toLowerCase() === "tbc" ||
+      cleanB.toLowerCase() === "tbd" ||
+      cleanA.toLowerCase() === "tbc"
     ) continue;
   
     // 🧠 Try to find a near match (same teams, same comp, kickoff within ±48h)
@@ -145,13 +147,14 @@ export async function importMatchesFromICS(icsText, comp) {
   
     if (nearMatch) {
       // ✅ Update kickoff time if changed
+      console.log(`🔁 Existing match found — updating kickoff for ${cleanA} vs ${cleanB}`);
       if (nearMatch.kickoff !== kickoff) {
         nearMatch.kickoff = kickoff;
       }
-  
       updated.push(nearMatch);
     } else {
       // ✅ New fixture
+      console.log(`🆕 New match: ${cleanA} vs ${cleanB} @ ${kickoff}`);
       updated.push({
         id: Date.now() + Math.floor(Math.random() * 1000),
         competitionId: comp.id,
