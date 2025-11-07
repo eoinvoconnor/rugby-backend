@@ -92,9 +92,7 @@ export function normalizeUrl(url) {
   return normalized;
 }
 
-/**
- * Import matches from ICS feed
- */
+// * Import matches from ICS feed
 export async function importMatchesFromICS(icsText, comp) {
   if (!icsText || typeof icsText !== "string") {
     throw new Error(`No ICS text provided for competition "${comp?.name || "unknown"}"`);
@@ -107,62 +105,65 @@ export async function importMatchesFromICS(icsText, comp) {
   // --- Parse the ICS text ---
   const events = ical.parseICS(icsText);
 
-// --- Load current matches from disk ---
-const allMatches = await loadJSON(matchesFile);
+  // --- Load current matches from disk ---
+  const allMatches = await loadJSON(matchesFile);
 
-// --- Remove old matches from this competition ---
-const existing = allMatches.filter((m) => m.competitionId !== comp.id);
-const updated = [];
-let added = 0;
+  // --- Remove old matches from this competition ---
+  const existing = allMatches.filter((m) => m.competitionId !== comp.id);
+  const updated = [];
+  let added = 0;
+  let changed = 0;
 
-// --- Iterate through events and build matches ---
-for (const key in events) {
-  const ev = events[key];
-  if (!ev || ev.type !== "VEVENT") continue;
+  // --- Iterate through events and build matches ---
+  for (const key in events) {
+    const ev = events[key];
+    if (!ev || ev.type !== "VEVENT") continue;
 
-  const summary = (ev.summary || "").trim();
-  if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
+    const summary = (ev.summary || "").trim();
+    if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
 
-  const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
-  const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
+    const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
+    const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
 
-  // ✅ Clean here
-  const cleanA = cleanTeamText(teamA, comp.name);
-  const cleanB = cleanTeamText(teamB, comp.name);
-  console.log("🧼 Cleaned:", cleanA, "|", cleanB);
+    // ✅ Clean here
+    const cleanA = cleanTeamText(teamA, comp.name);
+    const cleanB = cleanTeamText(teamB, comp.name);
+    console.log("🧼 Cleaned:", cleanA, "|", cleanB);
 
-  if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
+    if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
 
-  // Check for a near-duplicate (same teams, same comp, kickoff within ±48h)
-  const nearMatch = allMatches.find(m =>
-    m.competitionId === comp.id &&
-    [m.teamA, m.teamB].sort().join() === [cleanA, cleanB].sort().join() &&
-    Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
-  );
+    // ✅ Check for a near-duplicate (same teams, same comp, kickoff within ±48h)
+    const nearMatch = allMatches.find(m =>
+      m.competitionId === comp.id &&
+      [m.teamA, m.teamB].sort().join() === [cleanA, cleanB].sort().join() &&
+      Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
+    );
 
-  if (nearMatch) {
-    // Update kickoff if needed
-    nearMatch.kickoff = kickoff;
-    updated.push(nearMatch);
-  } else {
-    // New match
-    updated.push({
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      competitionId: comp.id,
-      competitionName: comp.name,
-      competitionColor: comp.color || "#888",
-      teamA: cleanA,
-      teamB: cleanB,
-      kickoff,
-      result: { winner: null, margin: null },
-    });
-    added++;
+    if (nearMatch) {
+      if (nearMatch.kickoff !== kickoff) {
+        nearMatch.kickoff = kickoff;
+        changed++;
+      }
+      updated.push(nearMatch);
+    } else {
+      updated.push({
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        competitionId: comp.id,
+        competitionName: comp.name,
+        competitionColor: comp.color || "#888",
+        teamA: cleanA,
+        teamB: cleanB,
+        kickoff,
+        result: { winner: null, margin: null },
+      });
+      added++;
+    }
   }
-}
 
-  // --- Write back to disk ---
-  await saveJSON(matchesFile, matches);
+  // --- Combine and save ---
+  const finalMatches = [...existing, ...updated];
+  await saveJSON(matchesFile, finalMatches);
 
-  console.log(`✅ ${added} new, ${updated} updated for ${comp.name}`);
-  return matches;  // ✅ return the array
+  console.log(`✅ ${added} new, ${changed} updated for ${comp.name}`);
+  return finalMatches;
 }
