@@ -118,34 +118,40 @@ export async function importMatchesFromICS(icsText, comp) {
   for (const key in events) {
     const ev = events[key];
     if (!ev || ev.type !== "VEVENT") continue;
-
+  
     const summary = (ev.summary || "").trim();
     if (!summary.match(/\b(vs?\.?)\b/i)) continue; // skip if no "v"/"vs"
-
+  
     const [teamA, teamB] = splitTeamsFromSummary(summary, comp.name);
     const kickoff = ev.start ? new Date(ev.start).toISOString() : null;
-
-    // ✅ Clean here
+  
+    // ✅ Clean team names
     const cleanA = cleanTeamText(teamA, comp.name);
     const cleanB = cleanTeamText(teamB, comp.name);
-    console.log("🧼 Cleaned:", cleanA, "|", cleanB);
-
-    if (!cleanA || !cleanB || (cleanA.toLowerCase() === "tbc" && cleanB.toLowerCase() === "tbc")) continue;
-
-    // ✅ Check for a near-duplicate (same teams, same comp, kickoff within ±48h)
+  
+    // 🚫 Exclude placeholders entirely
+    if (
+      !cleanA || !cleanB ||
+      cleanA.toLowerCase() === "tbd" ||
+      cleanB.toLowerCase() === "tbd"
+    ) continue;
+  
+    // 🧠 Try to find a near match (same teams, same comp, kickoff within ±48h)
     const nearMatch = allMatches.find(m =>
       m.competitionId === comp.id &&
       [m.teamA, m.teamB].sort().join() === [cleanA, cleanB].sort().join() &&
       Math.abs(new Date(m.kickoff) - new Date(kickoff)) < 1000 * 60 * 60 * 48
     );
-
+  
     if (nearMatch) {
+      // ✅ Update kickoff time if changed
       if (nearMatch.kickoff !== kickoff) {
         nearMatch.kickoff = kickoff;
-        changed++;
       }
+  
       updated.push(nearMatch);
     } else {
+      // ✅ New fixture
       updated.push({
         id: Date.now() + Math.floor(Math.random() * 1000),
         competitionId: comp.id,
@@ -161,9 +167,12 @@ export async function importMatchesFromICS(icsText, comp) {
   }
 
   // --- Combine and save ---
-  const finalMatches = [...existing, ...updated];
+  const finalMatches = [
+    ...allMatches.filter(m => m.competitionId !== comp.id),
+    ...updated
+  ];
   await saveJSON(matchesFile, finalMatches);
-
-  console.log(`✅ ${added} new, ${changed} updated for ${comp.name}`);
+  
+  console.log(`✅ ${added} new, ${updated.length - added} updated for ${comp.name}`);
   return finalMatches;
 }
