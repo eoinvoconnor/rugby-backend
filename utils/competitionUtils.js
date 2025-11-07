@@ -20,7 +20,7 @@ export function loadJSON(file) {
 
 export function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
-  console.log(`💾 Saved ${matches.length} matches to disk`);
+  console.log(`💾 Saved ${data.length} records to ${path.basename(file)}`);
 }
 
 // --- Helpers for cleaning feed titles ---
