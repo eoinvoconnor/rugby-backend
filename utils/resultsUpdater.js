@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 console.log("🧪 resultsUpdater.js loaded");
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "../data"); // ✅ FIXED HERE
+const DATA_DIR = process.env.DATA_DIR || "/var/data"; // ✅ Persistent disk first
 const SCRAPE_DIR = path.join(__dirname, "../scrape");
 
 // --- Helpers ---
@@ -81,8 +81,7 @@ async function fetchBBCResultsForDate(dateISO) {
 
       if (!teamA || !teamB || isNaN(scoreA) || isNaN(scoreB)) return;
 
-      const winner =
-        scoreA > scoreB ? teamA : scoreB > scoreA ? teamB : "draw";
+      const winner = scoreA > scoreB ? teamA : scoreB > scoreA ? teamB : "draw";
       const margin = Math.abs(scoreA - scoreB);
 
       results.push({
@@ -92,7 +91,7 @@ async function fetchBBCResultsForDate(dateISO) {
         scoreB,
         winner,
         margin,
-        date: dateISO, // ✅ Needed for ±3 day check
+        date: dateISO,
       });
     });
 
@@ -184,7 +183,7 @@ export async function updateResultsFromSources(_, __, ___, ____, options = {}) {
     }
   }
 
-  await writeJSON("matches.json", matches); // ✅ writes to correct file now
+  await writeJSON("matches.json", matches);
   console.log(`📈 Total match results updated: ${updates}`);
 
   return updates;
