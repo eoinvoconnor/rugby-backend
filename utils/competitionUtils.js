@@ -8,8 +8,9 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const competitionsFile = path.join(__dirname, "../data/competitions.json");
-export const matchesFile = path.join(__dirname, "../data/matches.json");
+const DATA_DIR = process.env.DATA_DIR || "/var/data";
+export const matchesFile = path.join(DATA_DIR, "matches.json");
+export const competitionsFile = path.join(DATA_DIR, "competitions.json");
 
 // Load/save JSON helpers
 export function loadJSON(file) {
