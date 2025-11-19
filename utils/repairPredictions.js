@@ -1,65 +1,52 @@
-// /backend/utils/repairPredictions.js
+// repairPredictions.js (ES module version)
 
-const fs = require("fs");
-const path = require("path");
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const matchesPath = path.join(__dirname, "../data/matches.json");
-const predictionsPath = path.join(__dirname, "../data/predictions.json");
-const outputPath = path.join(__dirname, "../data/predictions-remap-candidates.json");
+// Workaround for __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-function readJSON(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-}
+// Load data
+const predictionsPath = path.join(__dirname, "../various/data/predictions.json");
+const matchesPath = path.join(__dirname, "../various/data/matches.json");
+const outputPath = path.join(__dirname, "../various/data/predictions-remap-candidates.json");
 
-function writeJSON(filePath, data) {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-}
+const predictions = JSON.parse(await fs.readFile(predictionsPath, "utf-8"));
+const matches = JSON.parse(await fs.readFile(matchesPath, "utf-8"));
 
-function getMatchById(matches, matchId) {
-  return matches.find((m) => m.id === matchId);
-}
+const suggestions = [];
 
-function isSameTeamName(nameA, nameB) {
-  return nameA.trim().toLowerCase() === nameB.trim().toLowerCase();
-}
+for (const p of predictions) {
+  const match = matches.find((m) => m.id === p.matchId);
+  if (match) continue; // already valid
 
-function findCandidateMatches(matches, predictedWinner, originalKickoff) {
-  const originalTime = new Date(originalKickoff).getTime();
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  return matches.filter((m) => {
-    const kickoffTime = new Date(m.kickoff).getTime();
-    const isBefore = kickoffTime <= originalTime && kickoffTime >= originalTime - sevenDaysMs;
-    const teamMatch = isSameTeamName(m.teamA, predictedWinner) || isSameTeamName(m.teamB, predictedWinner);
-    return isBefore && teamMatch;
+  const candidates = matches
+    .filter((m) => {
+      const predicted = (p.predictedWinner || "").toLowerCase();
+      const teamA = (m.teamA || "").toLowerCase();
+      const teamB = (m.teamB || "").toLowerCase();
+      return predicted === teamA || predicted === teamB;
+    })
+    .filter((m) => {
+      // within 7 days BEFORE prediction (conservatively assumes kickoff as lock time)
+      const targetKickoff = new Date(m.kickoff);
+      const now = new Date();
+      return targetKickoff <= now && now - targetKickoff <= 7 * 24 * 60 * 60 * 1000;
+    })
+    .map((m) => ({
+      matchId: m.id,
+      kickoff: m.kickoff,
+      teamA: m.teamA,
+      teamB: m.teamB,
+    }));
+
+  suggestions.push({
+    original: p,
+    suggestedMatches: candidates,
   });
 }
 
-function runRepair() {
-  const matches = readJSON(matchesPath);
-  const predictions = readJSON(predictionsPath);
-
-  const output = [];
-  let repaired = 0;
-
-  for (const pred of predictions) {
-    const { matchId, predictedWinner } = pred;
-    const originalMatch = getMatchById(matches, matchId);
-
-    if (!originalMatch) {
-      output.push({
-        prediction: pred,
-        originalKickoff: null,
-        candidateMatches: findCandidateMatches(matches, predictedWinner, new Date())
-      });
-      continue;
-    }
-
-    const candidateMatches = findCandidateMatches(matches, predictedWinner, originalMatch.kickoff);
-    output.push({ prediction: pred, originalKickoff: originalMatch.kickoff, candidateMatches });
-  }
-
-  writeJSON(outputPath, output);
-  console.log(`✅ Remap candidate file written to predictions-remap-candidates.json (${output.length} entries)`);
-}
-
-runRepair();
+await fs.writeFile(outputPath, JSON.stringify(suggestions, null, 2));
+console.log(`✅ Wrote ${suggestions.length} remap candidates to ${outputPath}`);
