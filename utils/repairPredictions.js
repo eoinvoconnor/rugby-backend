@@ -1,34 +1,65 @@
-// repairPredictions.js
-import fs from "fs";
-import path from "path";
+// /backend/utils/repairPredictions.js
 
-// Load data
-const DATA_DIR = "/var/data"; // Or adjust as needed
-const predictionsPath = path.join(DATA_DIR, "predictions.json");
-const matchesPath = path.join(DATA_DIR, "matches.json");
+const fs = require("fs");
+const path = require("path");
 
-let predictions = JSON.parse(fs.readFileSync(predictionsPath, "utf-8"));
-let matches = JSON.parse(fs.readFileSync(matchesPath, "utf-8"));
+const matchesPath = path.join(__dirname, "../data/matches.json");
+const predictionsPath = path.join(__dirname, "../data/predictions.json");
+const outputPath = path.join(__dirname, "../data/predictions-remap-candidates.json");
 
-const now = new Date().toISOString();
-let repaired = [];
-
-for (const p of predictions) {
-  // Skip if matchId not found in matches
-  const match = matches.find((m) => m.id === p.matchId);
-  if (!match) {
-    console.warn(`❌ Match ID ${p.matchId} not found — skipping`);
-    continue;
-  }
-
-  // Add submittedAt timestamp if not present
-  if (!p.submittedAt) {
-    p.submittedAt = now;
-  }
-
-  repaired.push(p);
+function readJSON(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
-// Save repaired file
-fs.writeFileSync(predictionsPath, JSON.stringify(repaired, null, 2));
-console.log(`✅ Repaired ${repaired.length} predictions`);
+function writeJSON(filePath, data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+}
+
+function getMatchById(matches, matchId) {
+  return matches.find((m) => m.id === matchId);
+}
+
+function isSameTeamName(nameA, nameB) {
+  return nameA.trim().toLowerCase() === nameB.trim().toLowerCase();
+}
+
+function findCandidateMatches(matches, predictedWinner, originalKickoff) {
+  const originalTime = new Date(originalKickoff).getTime();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  return matches.filter((m) => {
+    const kickoffTime = new Date(m.kickoff).getTime();
+    const isBefore = kickoffTime <= originalTime && kickoffTime >= originalTime - sevenDaysMs;
+    const teamMatch = isSameTeamName(m.teamA, predictedWinner) || isSameTeamName(m.teamB, predictedWinner);
+    return isBefore && teamMatch;
+  });
+}
+
+function runRepair() {
+  const matches = readJSON(matchesPath);
+  const predictions = readJSON(predictionsPath);
+
+  const output = [];
+  let repaired = 0;
+
+  for (const pred of predictions) {
+    const { matchId, predictedWinner } = pred;
+    const originalMatch = getMatchById(matches, matchId);
+
+    if (!originalMatch) {
+      output.push({
+        prediction: pred,
+        originalKickoff: null,
+        candidateMatches: findCandidateMatches(matches, predictedWinner, new Date())
+      });
+      continue;
+    }
+
+    const candidateMatches = findCandidateMatches(matches, predictedWinner, originalMatch.kickoff);
+    output.push({ prediction: pred, originalKickoff: originalMatch.kickoff, candidateMatches });
+  }
+
+  writeJSON(outputPath, output);
+  console.log(`✅ Remap candidate file written to predictions-remap-candidates.json (${output.length} entries)`);
+}
+
+runRepair();
